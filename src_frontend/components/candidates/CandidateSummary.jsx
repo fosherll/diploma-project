@@ -1,9 +1,22 @@
+import { useState } from "react";
+
 function formatFailedCriteria(list) {
     if (!Array.isArray(list) || list.length === 0) return "—";
     return list.map((item) => item?.name || item?.calc_type || "Unknown").join(", ");
 }
 
-export default function CandidateSummary({ summary }) {
+async function fetchAiSummary(vacancyId, resumeId, payload) {
+    const res = await fetch(`/vacancies/${vacancyId}/resumes/${resumeId}/ai-summary`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    return data.summary;
+}
+
+export default function CandidateSummary({ summary, vacancyId, vacancyTitle }) {
     if (!summary) {
         return <p>Select a candidate to view summary.</p>;
     }
@@ -47,6 +60,39 @@ export default function CandidateSummary({ summary }) {
                 : requiredState === "not_configured"
                     ? "Not configured"
                     : "Not evaluated";
+
+    const [aiSummary, setAiSummary] = useState(null);
+    const [aiLoading, setAiLoading] = useState(false);
+    const [aiError, setAiError] = useState(null);
+
+    async function handleGenerateAi() {
+        setAiLoading(true);
+        setAiError(null);
+        try {
+            const matchedSkills = (summary.strengths || [])
+                .filter(s => s.calc_type === "skill_mapping_match" || s.calc_type === "semantic_skill_match")
+                .map(s => s.explanation);
+            const missingSkills = (summary.weaknesses || [])
+                .filter(w => w.calc_type === "skill_mapping_match" || w.calc_type === "semantic_skill_match")
+                .map(w => w.explanation);
+
+            const text = await fetchAiSummary(vacancyId, summary.resume_id, {
+                vacancyTitle: vacancyTitle || "",
+                candidateName: summary.meta?.candidate_name || "",
+                candidateCity: summary.meta?.city || "",
+                totalScore: summary.total_score,
+                strengths: summary.strengths || [],
+                weaknesses: summary.weaknesses || [],
+                matchedSkills,
+                missingSkills
+            });
+            setAiSummary(text);
+        } catch (err) {
+            setAiError(err.message || "Failed to generate summary");
+        } finally {
+            setAiLoading(false);
+        }
+    }
 
     return (
         <div style={styles.card}>
@@ -138,6 +184,24 @@ export default function CandidateSummary({ summary }) {
                         <p>—</p>
                     )}
                 </div>
+            </div>
+
+            <div style={styles.aiBlock}>
+                <div style={styles.aiHeader}>
+                    <h4 style={styles.aiTitle}>AI Summary</h4>
+                    <button
+                        style={aiLoading ? styles.aiBtnLoading : styles.aiBtn}
+                        onClick={handleGenerateAi}
+                        disabled={aiLoading}
+                    >
+                        {aiLoading ? "Generating..." : aiSummary ? "Regenerate" : "Generate AI Summary"}
+                    </button>
+                </div>
+                {aiError && <p style={styles.aiError}>{aiError}</p>}
+                {aiSummary && <p style={styles.aiText}>{aiSummary}</p>}
+                {!aiSummary && !aiError && !aiLoading && (
+                    <p style={styles.aiHint}>Click the button to get an AI-generated explanation of this candidate's fit.</p>
+                )}
             </div>
         </div>
     );
@@ -243,5 +307,57 @@ const styles = {
         paddingLeft: "18px",
         display: "grid",
         gap: "10px"
+    },
+    aiBlock: {
+        marginTop: "16px",
+        background: "#f0f7ff",
+        border: "1px solid #bfdbfe",
+        borderRadius: "12px",
+        padding: "16px"
+    },
+    aiHeader: {
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "center",
+        marginBottom: "10px"
+    },
+    aiTitle: {
+        margin: 0,
+        fontSize: "15px"
+    },
+    aiBtn: {
+        background: "#2563eb",
+        color: "#fff",
+        border: "none",
+        borderRadius: "8px",
+        padding: "8px 16px",
+        cursor: "pointer",
+        fontSize: "13px",
+        fontWeight: 600
+    },
+    aiBtnLoading: {
+        background: "#93c5fd",
+        color: "#fff",
+        border: "none",
+        borderRadius: "8px",
+        padding: "8px 16px",
+        cursor: "not-allowed",
+        fontSize: "13px",
+        fontWeight: 600
+    },
+    aiText: {
+        margin: 0,
+        lineHeight: 1.7,
+        color: "#1e3a5f"
+    },
+    aiHint: {
+        margin: 0,
+        color: "#64748b",
+        fontSize: "13px"
+    },
+    aiError: {
+        margin: 0,
+        color: "#dc2626",
+        fontSize: "13px"
     }
 };

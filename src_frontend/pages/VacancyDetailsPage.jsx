@@ -7,10 +7,14 @@ import CriteriaList from "../components/criteria/CriteriaList.jsx";
 import CriteriaForm from "../components/criteria/CriteriaForm.jsx";
 import RunScoringButton from "../components/scoring/RunScoringButton.jsx";
 import RunsHistory from "../components/scoring/RunsHistory.jsx";
+import RunsComparison from "../components/scoring/RunsComparison.jsx";
 import TopCandidatesTable from "../components/candidates/TopCandidatesTable.jsx";
 import CandidateSummary from "../components/candidates/CandidateSummary.jsx";
 import SkillsPreview from "../components/candidates/SkillsPreview.jsx";
 import CompareCandidates from "../components/candidates/CompareCandidates.jsx";
+import CandidateClusters from "../components/candidates/CandidateClusters.jsx";
+import SkillGap from "../components/candidates/SkillGap.jsx";
+import VacancyRecommendations from "../components/candidates/VacancyRecommendations.jsx";
 
 export default function VacancyDetailsPage() {
     const { vacancyId } = useParams();
@@ -171,6 +175,10 @@ export default function VacancyDetailsPage() {
             </section>
 
             <section style={styles.section}>
+                <RunsComparison runs={runs} vacancyId={vacancyId} />
+            </section>
+
+            <section style={styles.section}>
                 <h2>Top candidates</h2>
                 <TopCandidatesTable
                     items={topData?.items || []}
@@ -180,11 +188,33 @@ export default function VacancyDetailsPage() {
             </section>
 
             <section style={styles.section}>
-                <CandidateSummary summary={summary} />
+                <CandidateSummary
+                    summary={summary}
+                    vacancyId={vacancyId}
+                    vacancyTitle={vacancy?.title}
+                />
+                <VacancyRecommendations
+                    vacancyId={vacancyId}
+                    resumeId={selectedCandidate?.resume_id}
+                />
             </section>
 
             <section style={styles.section}>
                 <SkillsPreview preview={skillsPreview} />
+            </section>
+
+            <section style={styles.section}>
+                <h2>Skill gap analysis</h2>
+                <SkillGap vacancyId={vacancyId} runId={selectedRunId} />
+            </section>
+
+            <section style={styles.section}>
+                <h2>Candidate clusters</h2>
+                <CandidateClusters
+                    vacancyId={vacancyId}
+                    runId={selectedRunId}
+                    onSelectCandidate={handleCandidateSelect}
+                />
             </section>
 
             <section style={styles.section}>

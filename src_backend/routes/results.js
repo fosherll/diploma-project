@@ -1,6 +1,10 @@
 import { withClient } from "../db.js";
 import { badRequest, notFound } from "../utils/httpErrors.js";
-
+import { SCORING_RULES } from "../domain/scoringRules.js";
+import { generateCandidateSummary } from "../services/llmSummaryService.js";
+import { clusterCandidates } from "../services/clusteringService.js";
+import { getSkillGap } from "../services/skillGapService.js";
+import { recommendVacanciesForResume } from "../services/vacancyRecommendService.js";
 
 /**
  * @typedef {Object} EnrichedRequiredMeta
@@ -307,11 +311,9 @@ export default async function resultsRoutes(app) {
                 }
             }
         }
-    }, async (req) => {
+    }, async (req, reply) => {
         const { vacancyId, resumeId } = req.params;
         const runId = req.query.run_id;
-
-        return reply.code(404).send({ error: "evaluation not found" });
 
         return await withClient(async (client) => {
             const { rows: evaluationRows } = await client.query(
@@ -324,11 +326,13 @@ export default async function resultsRoutes(app) {
                 [String(vacancyId), String(runId), String(resumeId)]
             );
 
-            if (evaluationRows.length === 0) {
-                throw notFound("Evaluation not found", {
-                    vacancyId: String(vacancyId),
-                    resumeId: String(resumeId),
-                    runId: String(runId)
+            if (!evaluation) {
+                return reply.code(404).send({
+                    ok: false,
+                    error: {
+                        code: "NOT_FOUND",
+                        message: "Evaluation not found"
+                    }
                 });
             }
 
@@ -801,5 +805,141 @@ export default async function resultsRoutes(app) {
                 weaknesses
             };
         });
+    });
+
+    app.get("/:vacancyId/clusters", {
+        schema: {
+            params: {
+                type: "object",
+                required: ["vacancyId"],
+                properties: { vacancyId: { type: "string", minLength: 1 } }
+            },
+            querystring: {
+                type: "object",
+                properties: {
+                    run_id: { type: "string" },
+                    k: { type: "integer", minimum: 2, maximum: 6, default: 3 },
+                    limit: { type: "integer", minimum: 5, maximum: 200, default: 50 }
+                }
+            }
+        }
+    }, async (req) => {
+        const { vacancyId } = req.params;
+        const { run_id, k = 3, limit = 50 } = req.query;
+        return await withClient(async (client) => {
+            return await clusterCandidates(client, vacancyId, run_id || null, limit, k);
+        });
+    });
+
+    app.get("/:vacancyId/runs/compare", {
+        schema: {
+            params: { type: "object", required: ["vacancyId"], properties: { vacancyId: { type: "string" } } },
+            querystring: { type: "object", required: ["run1", "run2"], properties: { run1: { type: "string" }, run2: { type: "string" } } }
+        }
+    }, async (req) => {
+        const { vacancyId } = req.params;
+        const { run1, run2 } = req.query;
+        return await withClient(async (client) => {
+            const fetchRun = async (runId) => {
+                const { rows } = await client.query(`
+                    SELECT e.resume_id, e.total_score, r.candidate_name, r.city,
+                           ROW_NUMBER() OVER (ORDER BY e.total_score DESC) AS rank
+                    FROM evaluations e
+                    LEFT JOIN resumes r ON r.id = e.resume_id
+                    WHERE e.vacancy_id = $1 AND e.run_id = $2
+                    ORDER BY e.total_score DESC
+                `, [String(vacancyId), runId]);
+                return rows;
+            };
+
+            const [rows1, rows2] = await Promise.all([fetchRun(run1), fetchRun(run2)]);
+
+            const map1 = Object.fromEntries(rows1.map(r => [r.resume_id, r]));
+            const map2 = Object.fromEntries(rows2.map(r => [r.resume_id, r]));
+            const allIds = [...new Set([...rows1.map(r => r.resume_id), ...rows2.map(r => r.resume_id)])];
+
+            const comparison = allIds.map(id => {
+                const r1 = map1[id];
+                const r2 = map2[id];
+                const rankChange = r1 && r2 ? Number(r1.rank) - Number(r2.rank) : null;
+                const scoreChange = r1 && r2 ? Math.round((Number(r2.total_score) - Number(r1.total_score)) * 1000) / 1000 : null;
+                return {
+                    resume_id: id,
+                    candidate_name: (r2 || r1)?.candidate_name || "—",
+                    city: (r2 || r1)?.city || "—",
+                    rank1: r1 ? Number(r1.rank) : null,
+                    rank2: r2 ? Number(r2.rank) : null,
+                    score1: r1 ? Number(r1.total_score) : null,
+                    score2: r2 ? Number(r2.total_score) : null,
+                    rank_change: rankChange,
+                    score_change: scoreChange,
+                    status: !r1 ? "new" : !r2 ? "removed" : rankChange > 0 ? "up" : rankChange < 0 ? "down" : "same"
+                };
+            }).sort((a, b) => (a.rank2 ?? 999) - (b.rank2 ?? 999));
+
+            return { run1, run2, comparison };
+        });
+    });
+
+    app.get("/:vacancyId/skill-gap", {
+        schema: {
+            params: { type: "object", required: ["vacancyId"], properties: { vacancyId: { type: "string" } } },
+            querystring: { type: "object", properties: { run_id: { type: "string" }, top: { type: "integer", default: 20 } } }
+        }
+    }, async (req) => {
+        const { vacancyId } = req.params;
+        const { run_id, top = 20 } = req.query;
+        return await withClient(async (client) => {
+            return await getSkillGap(client, vacancyId, run_id || null, top);
+        });
+    });
+
+    app.get("/:vacancyId/resumes/:resumeId/recommend-vacancies", {
+        schema: {
+            params: { type: "object", required: ["vacancyId", "resumeId"], properties: { vacancyId: { type: "string" }, resumeId: { type: "string" } } },
+            querystring: { type: "object", properties: { limit: { type: "integer", default: 5 } } }
+        }
+    }, async (req) => {
+        const { resumeId } = req.params;
+        const { limit = 5 } = req.query;
+        return await withClient(async (client) => {
+            return await recommendVacanciesForResume(client, resumeId, limit);
+        });
+    });
+
+    app.post("/:vacancyId/resumes/:resumeId/ai-summary", {
+        schema: {
+            params: {
+                type: "object",
+                required: ["vacancyId", "resumeId"],
+                properties: {
+                    vacancyId: { type: "string", minLength: 1 },
+                    resumeId: { type: "string", minLength: 1 }
+                }
+            },
+            body: {
+                type: "object",
+                properties: {
+                    vacancyTitle:  { type: "string" },
+                    candidateName: { type: "string" },
+                    candidateCity: { type: "string" },
+                    totalScore:    { type: "number" },
+                    strengths:     { type: "array" },
+                    weaknesses:    { type: "array" },
+                    matchedSkills: { type: "array", items: { type: "string" } },
+                    missingSkills: { type: "array", items: { type: "string" } }
+                }
+            }
+        }
+    }, async (req) => {
+        const { vacancyTitle, candidateName, candidateCity, totalScore, strengths, weaknesses, matchedSkills, missingSkills } = req.body;
+        try {
+            const text = await generateCandidateSummary({
+                vacancyTitle, candidateName, candidateCity, totalScore, strengths, weaknesses, matchedSkills, missingSkills
+            });
+            return { summary: text };
+        } catch (err) {
+            throw badRequest(err.message || "Failed to generate AI summary");
+        }
     });
 }

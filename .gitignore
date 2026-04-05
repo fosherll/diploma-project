@@ -1,0 +1,5 @@
+node_modules/
+.env
+dist/
+data/*.jsonl
+scripts/import/data/*.jsonl

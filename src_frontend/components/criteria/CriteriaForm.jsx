@@ -203,6 +203,7 @@ export default function CriteriaForm({ vacancyId, criteria, onSaved, onDraftChan
     const [saving, setSaving] = useState(false);
     const [message, setMessage] = useState("");
     const [preset, setPreset] = useState("balanced");
+    const [autoLoading, setAutoLoading] = useState(false);
 
     useEffect(() => {
         setItems(cloneCriteria(criteria));
@@ -246,6 +247,30 @@ export default function CriteriaForm({ vacancyId, criteria, onSaved, onDraftChan
     function handleReset() {
         setItems(cloneCriteria(criteria));
         setMessage("Changes were reset to the last saved state.");
+    }
+
+    async function handleAutoWeights() {
+        setAutoLoading(true);
+        setMessage("");
+        try {
+            const calcTypes = items.map(i => i.calc_type);
+            const res = await fetch(`/vacancies/${vacancyId}/criteria/auto-weights`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ calcTypes })
+            });
+            if (!res.ok) throw new Error(await res.text());
+            const { weights } = await res.json();
+            setItems(prev => prev.map(item => {
+                const w = weights[item.calc_type];
+                return w !== undefined ? { ...item, weight: w } : item;
+            }));
+            setMessage("AI suggested weights applied. Review and save if you agree.");
+        } catch (err) {
+            setMessage("Auto-configure failed: " + (err.message || "unknown error"));
+        } finally {
+            setAutoLoading(false);
+        }
     }
 
     async function handleSave() {
@@ -313,6 +338,10 @@ export default function CriteriaForm({ vacancyId, criteria, onSaved, onDraftChan
 
                     <button type="button" style={styles.secondaryButton} onClick={handleReset}>
                         Reset
+                    </button>
+
+                    <button type="button" style={styles.aiButton} onClick={handleAutoWeights} disabled={autoLoading}>
+                        {autoLoading ? "Analyzing..." : "Auto-configure"}
                     </button>
 
                     <button type="button" style={styles.primaryButton} onClick={handleSave} disabled={saving}>
@@ -604,6 +633,17 @@ const styles = {
         border: "1px solid #cbd5e1",
         background: "#fff",
         color: "#0f172a",
+        cursor: "pointer",
+        fontWeight: 600,
+        fontSize: "14px"
+    },
+    aiButton: {
+        height: "44px",
+        padding: "0 16px",
+        borderRadius: "12px",
+        border: "1px solid #7c3aed",
+        background: "#7c3aed",
+        color: "#fff",
         cursor: "pointer",
         fontWeight: 600,
         fontSize: "14px"

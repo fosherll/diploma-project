@@ -1,3 +1,5 @@
+import RadarChart from "./RadarChart.jsx";
+
 function formatFailedCriteria(list) {
     if (!Array.isArray(list) || list.length === 0) return "—";
     return list.map((item) => item?.name || item?.calc_type || "Unknown").join(", ");
@@ -123,6 +125,10 @@ export default function CompareCandidates({
             {compareItems.length !== 2 ? (
                 <p>Select exactly 2 candidates to view comparison.</p>
             ) : (
+                <RadarChart candidates={compareItems} />
+            )}
+
+            {compareItems.length === 2 && (
                 <div style={styles.columns}>
                     {compareItems.map((candidate) => (
                         <div key={candidate.resume_id} style={styles.compareColumn}>
@@ -153,6 +159,7 @@ export default function CompareCandidates({
         </div>
     );
 }
+
 
 const styles = {
     card: {

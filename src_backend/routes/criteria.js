@@ -1,5 +1,6 @@
 import { withClient } from "../db.js";
 import { badRequest } from "../utils/httpErrors.js";
+import { suggestWeights } from "../services/autoWeightsService.js";
 export default async function criteriaRoutes(app) {
     app.get("/:vacancyId/criteria", {
         schema: {
@@ -92,6 +93,46 @@ export default async function criteriaRoutes(app) {
             } catch (e) {
                 await client.query("ROLLBACK");
                 throw e;
+            }
+        });
+    });
+
+    app.post("/:vacancyId/criteria/auto-weights", {
+        schema: {
+            params: {
+                type: "object",
+                required: ["vacancyId"],
+                properties: {
+                    vacancyId: { type: "string", minLength: 1 }
+                }
+            },
+            body: {
+                type: "object",
+                properties: {
+                    calcTypes: { type: "array", items: { type: "string" } }
+                }
+            }
+        }
+    }, async (req) => {
+        const { vacancyId } = req.params;
+        const { calcTypes = [] } = req.body;
+
+        return await withClient(async (client) => {
+            const { rows } = await client.query(
+                "SELECT title, description_text FROM vacancies WHERE id=$1",
+                [String(vacancyId)]
+            );
+            if (!rows[0]) throw badRequest("Vacancy not found");
+
+            try {
+                const weights = await suggestWeights(
+                    rows[0].title || "",
+                    rows[0].description_text || "",
+                    calcTypes
+                );
+                return { weights };
+            } catch (err) {
+                throw badRequest(err.message || "Failed to suggest weights");
             }
         });
     });

@@ -505,6 +505,209 @@ function scoreExperienceMatch(resume, criterion, config) {
         }
     });
 }
+
+
+function cosineSimilarityJS(a, b) {
+    if (!a || !b || a.length !== b.length) return 0;
+    let dot = 0, normA = 0, normB = 0;
+    for (let i = 0; i < a.length; i++) {
+        dot += a[i] * b[i];
+        normA += a[i] * a[i];
+        normB += b[i] * b[i];
+    }
+    const denom = Math.sqrt(normA) * Math.sqrt(normB);
+    return denom > 0 ? dot / denom : 0;
+}
+
+function parseVector(vec) {
+    if (!vec) return null;
+    if (Array.isArray(vec)) return vec;
+    if (typeof vec === "string") {
+        const cleaned = vec.replace(/^\[/, "").replace(/\]$/, "");
+        return cleaned.split(",").map(Number);
+    }
+    return null;
+}
+
+async function scoreSemanticSkillMatch(client, resume, criterion, vacancyId, config) {
+    const minConfidence = Number(config.min_confidence ?? 0.7);
+    const similarityThreshold = Number(config.similarity_threshold ?? 0.75);
+
+    const { rows: resumeLinkRows } = await client.query(
+        `SELECT mapping_document_id FROM resume_mapping_links WHERE resume_id=$1 LIMIT 1`,
+        [String(resume.id)]
+    );
+    const resumeDocId = resumeLinkRows.length > 0
+        ? String(resumeLinkRows[0].mapping_document_id) : null;
+
+    const vacDocId = await resolveVacancyMappingDocumentId(client, vacancyId);
+
+    if (!resumeDocId || !vacDocId) {
+        return buildCriterionResult({
+            criterion, passed: false, rawScore: 0,
+            explanation: !resumeDocId
+                ? "resume mapping link was not found"
+                : "vacancy mapping link was not found",
+            details: { method: "semantic_embedding", resumeDocId, vacDocId,
+                similarityThreshold, matchedSkills: [],
+                exactMatchCount: 0, semanticMatchCount: 0, totalVacancySkills: 0 }
+        });
+    }
+
+    const { rows: cvRows } = await client.query(
+        `SELECT DISTINCT esco_uri, esco_label, confidence, embedding
+         FROM cv_skill_mappings
+         WHERE document_id=$1 AND esco_label IS NOT NULL AND confidence >= $2`,
+        [resumeDocId, minConfidence]
+    );
+
+    const { rows: vacRows } = await client.query(
+        `SELECT DISTINCT esco_uri, esco_label, confidence, embedding
+         FROM vac_skill_mappings
+         WHERE document_id=$1 AND esco_label IS NOT NULL AND confidence >= $2`,
+        [vacDocId, minConfidence]
+    );
+
+    if (vacRows.length === 0) {
+        return buildCriterionResult({
+            criterion, passed: false, rawScore: 0,
+            explanation: "vacancy skill mappings are empty",
+            details: { method: "semantic_embedding", cvSkillCount: cvRows.length,
+                vacSkillCount: 0, matchedSkills: [] }
+        });
+    }
+
+    const matchedSkills = [];
+    let exactMatchCount = 0;
+    let semanticMatchCount = 0;
+
+    const cvByLabel = new Map();
+    for (const cv of cvRows) {
+        cvByLabel.set(String(cv.esco_label).trim(), cv);
+    }
+
+    for (const vac of vacRows) {
+        const vacLabel = String(vac.esco_label).trim();
+        let bestMatch = null;
+        let bestSimilarity = 0;
+        let matchType = "none";
+
+        // 1) Точний збіг esco_label
+        if (cvByLabel.has(vacLabel)) {
+            bestMatch = cvByLabel.get(vacLabel);
+            bestSimilarity = 1.0;
+            matchType = "exact_label";
+            exactMatchCount++;
+        }
+        // 2) Семантичний збіг через pgvector cosine similarity
+        else if (vac.embedding) {
+            try {
+                const { rows: simRows } = await client.query(
+                    `SELECT esco_uri, esco_label, confidence,
+                            1 - (embedding <=> $1::vector) AS similarity
+                     FROM cv_skill_mappings
+                     WHERE document_id = $2
+                       AND esco_label IS NOT NULL
+                       AND confidence >= $3
+                       AND embedding IS NOT NULL
+                     ORDER BY embedding <=> $1::vector
+                     LIMIT 1`,
+                    [vac.embedding, resumeDocId, minConfidence]
+                );
+                if (simRows.length > 0 && Number(simRows[0].similarity) >= similarityThreshold) {
+                    bestMatch = simRows[0];
+                    bestSimilarity = Number(simRows[0].similarity);
+                    matchType = "semantic_embedding";
+                    semanticMatchCount++;
+                }
+            } catch {
+                // Fallback: cosine similarity у JS
+                const vacEmb = parseVector(vac.embedding);
+                if (vacEmb) {
+                    for (const cv of cvRows) {
+                        const cvEmb = parseVector(cv.embedding);
+                        if (!cvEmb) continue;
+                        const sim = cosineSimilarityJS(vacEmb, cvEmb);
+                        if (sim > bestSimilarity) {
+                            bestSimilarity = sim;
+                            bestMatch = cv;
+                        }
+                    }
+                    if (bestSimilarity >= similarityThreshold) {
+                        matchType = "semantic_js_fallback";
+                        semanticMatchCount++;
+                    } else {
+                        bestMatch = null;
+                    }
+                }
+            }
+        }
+        // 3) Збіг за esco_uri
+        else {
+            const cvByUri = cvRows.find(cv => cv.esco_uri && cv.esco_uri === vac.esco_uri);
+            if (cvByUri) {
+                bestMatch = cvByUri;
+                bestSimilarity = 1.0;
+                matchType = "exact_uri";
+                exactMatchCount++;
+            }
+        }
+
+        if (bestMatch) {
+            matchedSkills.push({
+                vacancy_skill: vacLabel,
+                vacancy_uri: vac.esco_uri,
+                matched_skill: String(bestMatch.esco_label).trim(),
+                matched_uri: bestMatch.esco_uri,
+                similarity: round4(bestSimilarity),
+                match_type: matchType,
+                vacancy_confidence: Number(vac.confidence ?? 0),
+                cv_confidence: Number(bestMatch.confidence ?? 0)
+            });
+        }
+    }
+
+    let weightedMatched = 0;
+    let weightedTotal = 0;
+
+    for (const vac of vacRows) {
+        const vacConf = Number(vac.confidence ?? 0);
+        weightedTotal += vacConf;
+        const match = matchedSkills.find(m => m.vacancy_uri === vac.esco_uri);
+        if (match) {
+            weightedMatched += match.similarity * Math.min(match.vacancy_confidence, match.cv_confidence);
+        }
+    }
+
+    const rawScore = weightedTotal > 0 ? weightedMatched / weightedTotal : 0;
+    const totalMatched = exactMatchCount + semanticMatchCount;
+
+    return buildCriterionResult({
+        criterion,
+        passed: rawScore > 0,
+        rawScore,
+        explanation: `semantic match: ${totalMatched}/${vacRows.length} skills `
+            + `(${exactMatchCount} exact + ${semanticMatchCount} semantic, `
+            + `threshold=${similarityThreshold})`,
+        details: {
+            method: "semantic_embedding",
+            similarityThreshold,
+            minConfidence,
+            resumeDocId,
+            vacDocId,
+            cvSkillCount: cvRows.length,
+            vacSkillCount: vacRows.length,
+            matchedSkills,
+            exactMatchCount,
+            semanticMatchCount,
+            totalMatchedCount: totalMatched,
+            weightedMatchedConfidence: round4(weightedMatched),
+            weightedVacancyConfidence: round4(weightedTotal)
+        }
+    });
+}
+
+
 async function scoreSkillMappingMatch(client, resume, criterion, vacancyId, config) {
     const minConfidence = Number(config.min_confidence ?? 0.7);
 
@@ -1143,6 +1346,9 @@ async function evaluateCriterion(client, resume, criterion, vacancyId) {
 
         case "skill_mapping_match":
             return await scoreSkillMappingMatch(client, resume, criterion, vacancyId, config);
+
+        case "semantic_skill_match":
+            return await scoreSemanticSkillMatch(client, resume, criterion, vacancyId, config);
 
         default:
             return buildCriterionResult({

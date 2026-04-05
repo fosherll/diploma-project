@@ -463,17 +463,26 @@ export async function ensureDefaultCriteria(client, vacancyId) {
         }
     ];
 
-    if (hasSkillMapping) {
-        defaultItems.push({
-            name: "Skill mapping match",
-            weight: 2.0,
-            calc_type: "skill_mapping_match",
-            config: {
-                min_confidence: 0.7
-            },
-            is_enabled: true
-        });
-    }
+    defaultItems.push({
+        name: "Skill mapping match (exact)",
+        weight: 1.0,
+        calc_type: "skill_mapping_match",
+        config: {
+            min_confidence: 0.7
+        },
+        is_enabled: true
+    });
+
+    defaultItems.push({
+        name: "Semantic skill match (embedding)",
+        weight: 3.0,
+        calc_type: "semantic_skill_match",
+        config: {
+            min_confidence: 0.7,
+            similarity_threshold: 0.75
+        },
+        is_enabled: true
+    });
 
     const { rows: existingRows } = await client.query(
         `SELECT name
