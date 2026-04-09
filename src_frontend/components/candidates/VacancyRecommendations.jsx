@@ -18,12 +18,7 @@ export default function VacancyRecommendations({ vacancyId, resumeId }) {
     if (!resumeId) return null;
     if (loading) return <div style={styles.wrapper}><p style={styles.hint}>Finding similar vacancies...</p></div>;
     if (!data) return null;
-    if (!data.available) return (
-        <div style={styles.wrapper}>
-            <h4 style={styles.title}>Similar vacancies for this candidate</h4>
-            <p style={styles.hint}>{data.reason}</p>
-        </div>
-    );
+    if (!data.available) return null;
 
     return (
         <div style={styles.wrapper}>

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { apiFetch } from "../../api/client.js";
 
 const STATUS_CONFIG = {
     up:      { icon: "↑", color: "#16a34a", bg: "#f0fdf4", label: "Moved up" },
@@ -35,9 +36,7 @@ export default function RunsComparison({ runs = [], vacancyId }) {
         setError("");
         setLoading(true);
         try {
-            const res = await fetch(`/vacancies/${vacancyId}/runs/compare?run1=${run1}&run2=${run2}`);
-            const json = await res.json();
-            if (!res.ok) throw new Error(json.error || "Request failed");
+            const json = await apiFetch(`/vacancies/${vacancyId}/runs/compare?run1=${run1}&run2=${run2}`);
             setData(json.comparison || []);
         } catch (e) {
             setError(e.message);

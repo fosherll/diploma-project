@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { apiFetch } from "../../api/client.js";
 
 const CLUSTER_COLORS = [
     { bg: "#eff6ff", border: "#bfdbfe", badge: "#2563eb", text: "#1e3a5f" },
@@ -20,8 +21,7 @@ export default function CandidateClusters({ vacancyId, runId, onSelectCandidate 
         try {
             const query = new URLSearchParams({ k: kVal, limit: 50 });
             if (runId) query.set("run_id", runId);
-            const res = await fetch(`/vacancies/${vacancyId}/clusters?${query}`);
-            const json = await res.json();
+            const json = await apiFetch(`/vacancies/${vacancyId}/clusters?${query}`);
             setData(json);
             // Expand all clusters by default
             const exp = {};

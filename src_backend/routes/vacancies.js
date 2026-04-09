@@ -43,10 +43,6 @@ export default async function vacanciesRoutes(app) {
                 throw notFound("Vacancy not found", { vacancyId: String(vacancyId) });
             }
 
-            if (!rows[0]) {
-                throw notFound("Vacancy not found", { vacancyId: String(vacancyId) });
-            }
-
             return rows[0];
         });
     });

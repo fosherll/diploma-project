@@ -286,48 +286,6 @@ function extractEducationRequirements(vacancy) {
     return unique(levels);
 }
 
-async function hasVacancyMappingLink(client, vacancyId) {
-    const normalizedVacancyId = String(vacancyId);
-
-    const { rows: directRows } = await client.query(
-        `SELECT 1
-         FROM vacancy_mapping_links
-         WHERE vacancy_id=$1
-         LIMIT 1`,
-        [normalizedVacancyId]
-    );
-
-    if (directRows.length > 0) {
-        return true;
-    }
-
-    const { rows: vacancyRows } = await client.query(
-        `SELECT title
-         FROM vacancies
-         WHERE id=$1
-         LIMIT 1`,
-        [normalizedVacancyId]
-    );
-
-    const vacancyTitle = vacancyRows[0]?.title ? String(vacancyRows[0].title).trim() : null;
-
-    if (!vacancyTitle) {
-        return false;
-    }
-
-    const { rows: mappingRows } = await client.query(
-        `SELECT 1
-         FROM vac_skill_mappings
-         WHERE lower(regexp_replace(trim(metadata->>'title'), '\s+', ' ', 'g')) =
-               lower(regexp_replace(trim($1), '\s+', ' ', 'g'))
-            OR lower(metadata->>'title') LIKE '%' || lower($1) || '%'
-            OR lower($1) LIKE '%' || lower(metadata->>'title') || '%'
-         LIMIT 1`,
-        [vacancyTitle]
-    );
-
-    return mappingRows.length > 0;
-}
 export async function ensureDefaultCriteria(client, vacancyId) {
     const { rows: vacancyRows } = await client.query(
         `SELECT *

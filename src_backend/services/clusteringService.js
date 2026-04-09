@@ -120,15 +120,6 @@ export async function clusterCandidates(client, vacancyId, runId, limit = 50, k 
         WHERE l.resume_id = ANY($1) AND m.embedding IS NOT NULL
     `, [resumeIds]);
 
-    // Group embeddings by resume_id
-    const embByResume = {};
-    for (const row of embRows) {
-        const resumeId = resumeIds.find(id => {
-            // mapping_document_id matches resume_id via resume_mapping_links
-            return true; // we'll match below
-        });
-    }
-
     // Build map: resume_id -> list of embeddings
     const { rows: linkRows } = await client.query(`
         SELECT resume_id, mapping_document_id FROM resume_mapping_links WHERE resume_id = ANY($1)
@@ -145,7 +136,12 @@ export async function clusterCandidates(client, vacancyId, runId, limit = 50, k 
         if (!resumeId) continue;
         if (!embeddingsByResume[resumeId]) embeddingsByResume[resumeId] = [];
         // Parse vector string "[0.1,0.2,...]"
-        const vec = JSON.parse(row.embedding.replace(/^\[/, "[").replace(/\]$/, "]"));
+        let vec;
+        try {
+            vec = JSON.parse(row.embedding);
+        } catch {
+            continue;
+        }
         embeddingsByResume[resumeId].push(vec);
     }
 

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { apiFetch } from "../../api/client.js";
 
 function formatFailedCriteria(list) {
     if (!Array.isArray(list) || list.length === 0) return "—";
@@ -6,13 +7,10 @@ function formatFailedCriteria(list) {
 }
 
 async function fetchAiSummary(vacancyId, resumeId, payload) {
-    const res = await fetch(`/vacancies/${vacancyId}/resumes/${resumeId}/ai-summary`, {
+    const data = await apiFetch(`/vacancies/${vacancyId}/resumes/${resumeId}/ai-summary`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
     });
-    if (!res.ok) throw new Error(await res.text());
-    const data = await res.json();
     return data.summary;
 }
 

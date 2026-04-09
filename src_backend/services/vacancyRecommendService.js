@@ -13,7 +13,37 @@ export async function recommendVacanciesForResume(client, resumeId, limit = 5) {
     `, [String(resumeId)]);
 
     if (!avgRows[0]?.avg_embedding) {
-        return { available: false, reason: "This resume has no ESCO skill embeddings" };
+        // Fallback: recommend by resume title similarity (text match)
+        const { rows: resumeRow } = await client.query(
+            `SELECT title FROM resumes WHERE id = $1`, [String(resumeId)]
+        );
+        const resumeTitle = resumeRow[0]?.title || "";
+        if (!resumeTitle) return { available: false, reason: "No embedding and no title" };
+
+        const { rows: fallback } = await client.query(`
+            SELECT v.id AS vacancy_id, v.title, v.location, v.employment_type,
+                   similarity(v.title, $1) AS similarity
+            FROM vacancies v
+            WHERE v.id != $2
+              AND similarity(v.title, $1) > 0.1
+            ORDER BY similarity DESC
+            LIMIT $3
+        `, [resumeTitle, String(resumeId), limit]);
+
+        if (!fallback.length) return { available: false, reason: "No similar vacancies found" };
+
+        return {
+            available: true,
+            resume_id: resumeId,
+            source: "title_similarity",
+            recommendations: fallback.map(r => ({
+                vacancy_id: r.vacancy_id,
+                title: r.title || "—",
+                location: r.location || "—",
+                employment_type: r.employment_type || "—",
+                similarity: Math.round(Number(r.similarity) * 1000) / 1000
+            }))
+        };
     }
 
     const resumeVec = avgRows[0].avg_embedding;

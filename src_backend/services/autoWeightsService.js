@@ -154,7 +154,12 @@ Include ALL criteria from the list above.`;
     });
 
     const text = response.text.trim().replace(/```json\n?|```/g, "").trim();
-    const weights = JSON.parse(text);
+    let weights;
+    try {
+        weights = JSON.parse(text);
+    } catch {
+        throw new Error("Gemini returned invalid JSON");
+    }
 
     const result = {};
     for (const ct of calcTypes) {

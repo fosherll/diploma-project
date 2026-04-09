@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { updateCriteria } from "../../api/criteriaApi.js";
+import { apiFetch } from "../../api/client.js";
 
 function cloneCriteria(items) {
     return (items || []).map((item) => ({
@@ -254,13 +255,10 @@ export default function CriteriaForm({ vacancyId, criteria, onSaved, onDraftChan
         setMessage("");
         try {
             const calcTypes = items.map(i => i.calc_type);
-            const res = await fetch(`/vacancies/${vacancyId}/criteria/auto-weights`, {
+            const { weights } = await apiFetch(`/vacancies/${vacancyId}/criteria/auto-weights`, {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ calcTypes })
             });
-            if (!res.ok) throw new Error(await res.text());
-            const { weights } = await res.json();
             setItems(prev => prev.map(item => {
                 const w = weights[item.calc_type];
                 return w !== undefined ? { ...item, weight: w } : item;
