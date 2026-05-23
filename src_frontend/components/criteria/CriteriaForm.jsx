@@ -112,17 +112,10 @@ function formatValue(value) {
     if (Array.isArray(value)) {
         if (value.length === 0) return "—";
         if (value.length <= 5) return value.join(", ");
-        return `${value.slice(0, 5).join(", ")} +${value.length - 5} more`;
+        return `${value.slice(0, 5).join(", ")} +${value.length - 5} ще`;
     }
-
-    if (typeof value === "boolean") {
-        return value ? "Yes" : "No";
-    }
-
-    if (value === null || value === undefined || value === "") {
-        return "—";
-    }
-
+    if (typeof value === "boolean") return value ? "Так" : "Ні";
+    if (value === null || value === undefined || value === "") return "—";
     return String(value);
 }
 
@@ -132,60 +125,60 @@ function getConfigRows(item) {
 
     switch (item.calc_type) {
         case "city_match":
-            rows.push({ label: "Expected city", value: config.city });
+            rows.push({ label: "Очікуване місто", value: config.city });
             break;
 
         case "region_match":
-            rows.push({ label: "Base city", value: config.city });
-            rows.push({ label: "Allowed region", value: config.aliases });
+            rows.push({ label: "Базове місто", value: config.city });
+            rows.push({ label: "Дозволений регіон", value: config.aliases });
             break;
 
         case "salary_match":
-            rows.push({ label: "Minimum salary", value: config.min_salary });
-            rows.push({ label: "Maximum salary", value: config.max_salary });
+            rows.push({ label: "Мінімальна зарплата", value: config.min_salary });
+            rows.push({ label: "Максимальна зарплата", value: config.max_salary });
             break;
 
         case "experience_match":
-            rows.push({ label: "Minimum years", value: config.min_years });
+            rows.push({ label: "Мінімум років досвіду", value: config.min_years });
             break;
 
         case "employment_type_match":
-            rows.push({ label: "Employment types", value: config.expected_values });
+            rows.push({ label: "Типи зайнятості", value: config.expected_values });
             break;
 
         case "language_match":
-            rows.push({ label: "Required languages", value: config.required_languages });
+            rows.push({ label: "Обов'язкові мови", value: config.required_languages });
             break;
 
         case "title_similarity_match":
-            rows.push({ label: "Role keywords", value: config.title_keywords });
+            rows.push({ label: "Ключові слова ролі", value: config.title_keywords });
             break;
 
         case "keyword_match":
-            rows.push({ label: "Keywords", value: config.keywords });
+            rows.push({ label: "Ключові слова", value: config.keywords });
             break;
 
         case "education_match":
-            rows.push({ label: "Education levels", value: config.required_levels });
+            rows.push({ label: "Рівні освіти", value: config.required_levels });
             break;
 
         case "recency_match":
-            rows.push({ label: "Fresh days", value: config.fresh_days });
-            rows.push({ label: "Acceptable days", value: config.acceptable_days });
-            rows.push({ label: "Stale days", value: config.stale_days });
+            rows.push({ label: "Свіжі дні", value: config.fresh_days });
+            rows.push({ label: "Прийнятні дні", value: config.acceptable_days });
+            rows.push({ label: "Застарілі дні", value: config.stale_days });
             break;
 
         case "completeness_match":
-            rows.push({ label: "Minimum CV length", value: config.min_markdown_length });
+            rows.push({ label: "Мінімальна довжина CV", value: config.min_markdown_length });
             break;
 
         case "bool_match":
-            rows.push({ label: "Field", value: config.field });
-            rows.push({ label: "Accepted values", value: config.truthy });
+            rows.push({ label: "Поле", value: config.field });
+            rows.push({ label: "Прийнятні значення", value: config.truthy });
             break;
 
         case "skill_mapping_match":
-            rows.push({ label: "Minimum confidence", value: config.min_confidence });
+            rows.push({ label: "Мінімальна впевненість", value: config.min_confidence });
             break;
 
         default:
@@ -214,15 +207,8 @@ export default function CriteriaForm({ vacancyId, criteria, onSaved, onDraftChan
         onDraftChange?.(items);
     }, [items, onDraftChange]);
 
-    const enabledCount = useMemo(
-        () => items.filter((item) => item.is_enabled).length,
-        [items]
-    );
-
-    const requiredCount = useMemo(
-        () => items.filter((item) => item?.config?.required).length,
-        [items]
-    );
+    const enabledCount  = useMemo(() => items.filter((item) => item.is_enabled).length, [items]);
+    const requiredCount = useMemo(() => items.filter((item) => item?.config?.required).length, [items]);
 
     function updateItem(index, patch) {
         setItems((prev) =>
@@ -242,12 +228,12 @@ export default function CriteriaForm({ vacancyId, criteria, onSaved, onDraftChan
 
     function handlePresetApply() {
         setItems((prev) => applyPresetToItems(prev, preset));
-        setMessage(`Template "${preset}" applied. Save criteria to keep changes.`);
+        setMessage(`Шаблон «${preset}» застосовано. Збережіть критерії для збереження змін.`);
     }
 
     function handleReset() {
         setItems(cloneCriteria(criteria));
-        setMessage("Changes were reset to the last saved state.");
+        setMessage("Зміни скинуто до останнього збереженого стану.");
     }
 
     async function handleAutoWeights() {
@@ -263,9 +249,9 @@ export default function CriteriaForm({ vacancyId, criteria, onSaved, onDraftChan
                 const w = weights[item.calc_type];
                 return w !== undefined ? { ...item, weight: w } : item;
             }));
-            setMessage("AI suggested weights applied. Review and save if you agree.");
+            setMessage("Ваги від AI застосовано. Перевірте і збережіть, якщо згодні.");
         } catch (err) {
-            setMessage("Auto-configure failed: " + (err.message || "unknown error"));
+            setMessage("Помилка авто-налаштування: " + (err.message || "невідома помилка"));
         } finally {
             setAutoLoading(false);
         }
@@ -288,10 +274,10 @@ export default function CriteriaForm({ vacancyId, criteria, onSaved, onDraftChan
             }));
 
             const result = await updateCriteria(vacancyId, payload);
-            setMessage(`Criteria saved successfully. Total items: ${result.count}.`);
+            setMessage(`Критерії збережено. Всього: ${result.count}.`);
             await onSaved?.();
         } catch (error) {
-            setMessage(error.message || "Failed to save criteria.");
+            setMessage(error.message || "Помилка збереження критеріїв.");
         } finally {
             setSaving(false);
         }
@@ -302,48 +288,48 @@ export default function CriteriaForm({ vacancyId, criteria, onSaved, onDraftChan
             <div style={styles.headerCard}>
                 <div style={styles.stats}>
                     <div style={styles.statBox}>
-                        <span style={styles.statLabel}>Total criteria</span>
+                        <span style={styles.statLabel}>Всього критеріїв</span>
                         <strong>{items.length}</strong>
                     </div>
                     <div style={styles.statBox}>
-                        <span style={styles.statLabel}>Enabled</span>
+                        <span style={styles.statLabel}>Увімкнено</span>
                         <strong>{enabledCount}</strong>
                     </div>
                     <div style={styles.statBox}>
-                        <span style={styles.statLabel}>Required</span>
+                        <span style={styles.statLabel}>Обов'язкових</span>
                         <strong>{requiredCount}</strong>
                     </div>
                 </div>
 
                 <div style={styles.toolbar}>
                     <div style={styles.toolbarGroup}>
-                        <label style={styles.label}>Template</label>
+                        <label style={styles.label}>Шаблон</label>
                         <select
                             value={preset}
                             onChange={(e) => setPreset(e.target.value)}
                             style={styles.select}
                         >
-                            <option value="balanced">Balanced</option>
-                            <option value="strict">Strict</option>
-                            <option value="skills_first">Skills first</option>
-                            <option value="call_center">Call center</option>
+                            <option value="balanced">Збалансований</option>
+                            <option value="strict">Суворий</option>
+                            <option value="skills_first">Навички у пріоритеті</option>
+                            <option value="call_center">Колл-центр</option>
                         </select>
                     </div>
 
                     <button type="button" style={styles.secondaryButton} onClick={handlePresetApply}>
-                        Apply template
+                        Застосувати
                     </button>
 
                     <button type="button" style={styles.secondaryButton} onClick={handleReset}>
-                        Reset
+                        Скинути
                     </button>
 
                     <button type="button" style={styles.aiButton} onClick={handleAutoWeights} disabled={autoLoading}>
-                        {autoLoading ? "Analyzing..." : "Auto-configure"}
+                        {autoLoading ? "Аналіз…" : "✦ AI ваги"}
                     </button>
 
                     <button type="button" style={styles.primaryButton} onClick={handleSave} disabled={saving}>
-                        {saving ? "Saving..." : "Save criteria"}
+                        {saving ? "Збереження…" : "Зберегти"}
                     </button>
                 </div>
             </div>
@@ -373,13 +359,13 @@ export default function CriteriaForm({ vacancyId, criteria, onSaved, onDraftChan
                                             })
                                         }
                                     />
-                                    <span>Enabled</span>
+                                    <span>Увімкнено</span>
                                 </label>
                             </div>
 
                             <div style={styles.mainControls}>
                                 <div style={styles.field}>
-                                    <label style={styles.label}>Weight</label>
+                                    <label style={styles.label}>Вага</label>
                                     <input
                                         type="number"
                                         step="0.1"
@@ -406,16 +392,16 @@ export default function CriteriaForm({ vacancyId, criteria, onSaved, onDraftChan
                                                 })
                                             }
                                         />
-                                        <span>Required criterion</span>
+                                        <span>Обов'язковий критерій</span>
                                     </label>
                                     <span style={styles.helpText}>
-                                        Required criteria are used in scoring only when the criterion is enabled. If you mark a criterion as required, it will be enabled automatically.
+                                        Обов'язкові критерії враховуються у скорингу. Якщо позначити критерій обов'язковим, він увімкнеться автоматично.
                                     </span>
                                 </div>
                             </div>
 
                             <div style={styles.configCard}>
-                                <div style={styles.configTitle}>Criterion settings</div>
+                                <div style={styles.configTitle}>Налаштування критерію</div>
 
                                 {configRows.length ? (
                                     <div style={styles.configGrid}>
@@ -427,7 +413,7 @@ export default function CriteriaForm({ vacancyId, criteria, onSaved, onDraftChan
                                         ))}
                                     </div>
                                 ) : (
-                                    <div style={styles.emptyConfig}>No additional settings</div>
+                                    <div style={styles.emptyConfig}>Додаткових налаштувань немає</div>
                                 )}
                             </div>
                         </div>

@@ -6,21 +6,37 @@ export default async function vacanciesRoutes(app) {
             querystring: {
                 type: "object",
                 properties: {
-                    limit: { type: "integer", minimum: 1, maximum: 200, default: 20 },
-                    offset: { type: "integer", minimum: 0, default: 0 }
+                    limit:  { type: "integer", minimum: 1, maximum: 200, default: 20 },
+                    offset: { type: "integer", minimum: 0, default: 0 },
+                    search: { type: "string", default: "" }
                 }
             }
         }
-    },
-        async (req) => {
-            const { limit = 20, offset = 0 } = req.query;
+    }, async (req) => {
+        const { limit = 20, offset = 0, search = "" } = req.query;
 
         return await withClient(async (client) => {
+            if (search.trim()) {
+                const { rows } = await client.query(
+                    `SELECT id, title, location, employment_type
+                     FROM vacancies
+                     WHERE title ILIKE $1
+                     ORDER BY id DESC LIMIT $2 OFFSET $3`,
+                    [`%${search.trim()}%`, limit, offset]
+                );
+                const { rows: total } = await client.query(
+                    `SELECT COUNT(*) AS cnt FROM vacancies WHERE title ILIKE $1`,
+                    [`%${search.trim()}%`]
+                );
+                return { items: rows, total: Number(total[0].cnt), search };
+            }
+
             const { rows } = await client.query(
                 "SELECT id, title, location, employment_type FROM vacancies ORDER BY id DESC LIMIT $1 OFFSET $2",
                 [limit, offset]
             );
-            return rows;
+            const { rows: total } = await client.query("SELECT COUNT(*) AS cnt FROM vacancies");
+            return { items: rows, total: Number(total[0].cnt), search: "" };
         });
     });
 

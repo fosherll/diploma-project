@@ -111,52 +111,37 @@ export async function clusterCandidates(client, vacancyId, runId, limit = 50, k 
 
     if (!candidates.length) return { clusters: [], k };
 
-    // Get averaged skill embeddings per candidate
+    // Single query: fetch resume_id, esco_label, embedding together (eliminates second linkRows query)
     const resumeIds = candidates.map(c => c.resume_id);
     const { rows: embRows } = await client.query(`
-        SELECT m.document_id, m.esco_label, m.embedding::text
+        SELECT l.resume_id, m.esco_label, m.embedding::text
         FROM cv_skill_mappings m
         JOIN resume_mapping_links l ON l.mapping_document_id = m.document_id
         WHERE l.resume_id = ANY($1) AND m.embedding IS NOT NULL
     `, [resumeIds]);
 
-    // Build map: resume_id -> list of embeddings
-    const { rows: linkRows } = await client.query(`
-        SELECT resume_id, mapping_document_id FROM resume_mapping_links WHERE resume_id = ANY($1)
-    `, [resumeIds]);
-
-    const docIdToResumeId = {};
-    for (const lr of linkRows) {
-        docIdToResumeId[lr.mapping_document_id] = lr.resume_id;
-    }
-
-    const embeddingsByResume = {};
+    // Pre-compute per-resume maps in a single pass — O(N) instead of O(N×M)
+    const embeddingsByResume = new Map();
+    const skillsByResume = new Map();
     for (const row of embRows) {
-        const resumeId = docIdToResumeId[row.document_id];
-        if (!resumeId) continue;
-        if (!embeddingsByResume[resumeId]) embeddingsByResume[resumeId] = [];
-        // Parse vector string "[0.1,0.2,...]"
-        let vec;
-        try {
-            vec = JSON.parse(row.embedding);
-        } catch {
-            continue;
+        const rid = row.resume_id;
+        if (!embeddingsByResume.has(rid)) {
+            embeddingsByResume.set(rid, []);
+            skillsByResume.set(rid, new Set());
         }
-        embeddingsByResume[resumeId].push(vec);
+        try {
+            embeddingsByResume.get(rid).push(JSON.parse(row.embedding));
+        } catch { /* skip malformed vector */ }
+        skillsByResume.get(rid).add(row.esco_label);
     }
 
     // Compute average embedding per candidate
     const candidatesWithVec = candidates.map(c => ({
         ...c,
-        vector: embeddingsByResume[c.resume_id]
-            ? averageVectors(embeddingsByResume[c.resume_id])
+        vector: embeddingsByResume.has(c.resume_id)
+            ? averageVectors(embeddingsByResume.get(c.resume_id))
             : null,
-        topSkills: [...new Set(
-            (embRows
-                .filter(r => docIdToResumeId[r.document_id] === c.resume_id)
-                .map(r => r.esco_label)
-            )
-        )].slice(0, 3)
+        topSkills: [...(skillsByResume.get(c.resume_id) ?? [])].slice(0, 3)
     }));
 
     const withVec = candidatesWithVec.filter(c => c.vector !== null);

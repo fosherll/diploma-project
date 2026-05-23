@@ -1,6 +1,18 @@
 import { randomUUID } from "crypto";
 import { SCORING_RULES } from "../domain/scoringRules.js";
 import { resolveVacancyMappingDocumentId } from "../utils/resolveVacancyMapping.js";
+import { resolveResumeMappingDocumentId } from "../utils/resolveResumeMapping.js";
+import { round4 } from "../utils/math.js";
+
+// ── Налаштування скорингу (порогові значення) ────────────────────────────────
+/** Макс. допустиме перевищення зарплати без штрафу (1.2 = +20%) */
+const SALARY_OVER_RATIO_TOLERANCE = 1.2;
+/** Частка стажу від мінімуму, яка дає частковий залік (0.7 = 70%) */
+const EXPERIENCE_PARTIAL_THRESHOLD = 0.7;
+/** Бали за свіжість резюме залежно від віку */
+const RECENCY_SCORE_FRESH      = 1.0;
+const RECENCY_SCORE_ACCEPTABLE = 0.6;
+const RECENCY_SCORE_STALE      = 0.25;
 
 /**
  * @typedef {Object} Criterion
@@ -71,10 +83,6 @@ function parseConfig(config) {
     } catch {
         return {};
     }
-}
-
-function round4(value) {
-    return Math.round(Number(value) * 10000) / 10000;
 }
 
 /**
@@ -167,8 +175,6 @@ function extractYearsOfExperience(value) {
 
     return null;
 }
-// resolveVacancyMappingDocumentId imported from ../utils/resolveVacancyMapping.js
-
 function tokenizeText(value) {
     return normalizeText(value)
         .split(/[^a-zа-яіїєґ0-9+#]+/iu)
@@ -284,7 +290,7 @@ function scoreSalaryMatch(resume, criterion, config) {
     if (maxSalary !== null && actualSalary > maxSalary) {
         const overRatio = actualSalary / maxSalary;
 
-        if (overRatio <= 1.2) {
+        if (overRatio <= SALARY_OVER_RATIO_TOLERANCE) {
             return buildCriterionResult({
                 criterion,
                 passed: false,
@@ -385,7 +391,7 @@ function scoreExperienceMatch(resume, criterion, config) {
     }
 
     const ratio = actualYears / minYears;
-    const partialMatch = ratio >= 0.7;
+    const partialMatch = ratio >= EXPERIENCE_PARTIAL_THRESHOLD;
     const rawScore = partialMatch ? 0.5 : 0;
 
     return buildCriterionResult({
@@ -429,16 +435,11 @@ function parseVector(vec) {
 
 async function scoreSemanticSkillMatch(client, resume, criterion, vacancyId, config) {
     const minConfidence = Number(config.min_confidence ?? 0.7);
-    const similarityThreshold = Number(config.similarity_threshold ?? 0.75);
 
-    const { rows: resumeLinkRows } = await client.query(
-        `SELECT mapping_document_id FROM resume_mapping_links WHERE resume_id=$1 LIMIT 1`,
-        [String(resume.id)]
-    );
-    const resumeDocId = resumeLinkRows.length > 0
-        ? String(resumeLinkRows[0].mapping_document_id) : null;
-
-    const vacDocId = await resolveVacancyMappingDocumentId(client, vacancyId);
+    const [resumeDocId, vacDocId] = await Promise.all([
+        resolveResumeMappingDocumentId(client, resume.id),
+        resolveVacancyMappingDocumentId(client, vacancyId)
+    ]);
 
     if (!resumeDocId || !vacDocId) {
         return buildCriterionResult({
@@ -446,161 +447,98 @@ async function scoreSemanticSkillMatch(client, resume, criterion, vacancyId, con
             explanation: !resumeDocId
                 ? "resume mapping link was not found"
                 : "vacancy mapping link was not found",
-            details: { method: "semantic_embedding", resumeDocId, vacDocId,
-                similarityThreshold, matchedSkills: [],
-                exactMatchCount: 0, semanticMatchCount: 0, totalVacancySkills: 0 }
+            details: { method: "average_best_match", resumeDocId, vacDocId,
+                skillDetails: [], vacSkillCount: 0, cvSkillCount: 0 }
         });
     }
 
-    const { rows: cvRows } = await client.query(
-        `SELECT DISTINCT esco_uri, esco_label, confidence, embedding
-         FROM cv_skill_mappings
-         WHERE document_id=$1 AND esco_label IS NOT NULL AND confidence >= $2`,
-        [resumeDocId, minConfidence]
+    // pgvector LATERAL знаходить найближчу CV навичку для кожної vacancy навички
+    // через HNSW індекс — O(N × log M) замість O(N × M).
+    // countRows запускається лише коли matchRows порожній — економимо round-trip в нормальному випадку.
+    const { rows: matchRows } = await client.query(
+        `SELECT
+             v.esco_label                          AS vac_label,
+             nearest.esco_label                    AS cv_label,
+             1 - (v.embedding <=> nearest.embedding) AS similarity
+         FROM vac_skill_mappings v
+         CROSS JOIN LATERAL (
+             SELECT c.esco_label, c.embedding
+             FROM cv_skill_mappings c
+             WHERE c.document_id = $2
+               AND c.esco_label IS NOT NULL
+               AND c.confidence >= $3
+               AND c.embedding IS NOT NULL
+             ORDER BY c.embedding <=> v.embedding
+             LIMIT 1
+         ) nearest
+         WHERE v.document_id = $1
+           AND v.esco_label IS NOT NULL
+           AND v.confidence >= $3
+           AND v.embedding IS NOT NULL`,
+        [vacDocId, resumeDocId, minConfidence]
     );
 
-    const { rows: vacRows } = await client.query(
-        `SELECT DISTINCT esco_uri, esco_label, confidence, embedding
-         FROM vac_skill_mappings
-         WHERE document_id=$1 AND esco_label IS NOT NULL AND confidence >= $2`,
-        [vacDocId, minConfidence]
-    );
+    if (matchRows.length === 0) {
+        // Lazy diagnostic: find out WHY there are no matches
+        const { rows: countRows } = await client.query(
+            `SELECT
+                 (SELECT COUNT(DISTINCT esco_label) FROM vac_skill_mappings
+                  WHERE document_id=$1 AND esco_label IS NOT NULL AND confidence>=$3) AS vac_count,
+                 (SELECT COUNT(DISTINCT esco_label) FROM cv_skill_mappings
+                  WHERE document_id=$2 AND esco_label IS NOT NULL AND confidence>=$3) AS cv_count`,
+            [vacDocId, resumeDocId, minConfidence]
+        );
+        const vacSkillCount = Number(countRows[0]?.vac_count ?? 0);
+        const cvSkillCount  = Number(countRows[0]?.cv_count  ?? 0);
 
-    if (vacRows.length === 0) {
+        const explanation = vacSkillCount === 0
+            ? "vacancy has no skill mappings"
+            : cvSkillCount === 0
+                ? "resume has no skill mappings"
+                : "no skill pairs above similarity threshold";
+
         return buildCriterionResult({
             criterion, passed: false, rawScore: 0,
-            explanation: "vacancy skill mappings are empty",
-            details: { method: "semantic_embedding", cvSkillCount: cvRows.length,
-                vacSkillCount: 0, matchedSkills: [] }
+            explanation,
+            details: { method: "average_best_match", cvSkillCount, vacSkillCount, skillDetails: [] }
         });
     }
 
-    const matchedSkills = [];
-    let exactMatchCount = 0;
-    let semanticMatchCount = 0;
+    // Compute counts from matchRows for the details object (no extra query needed)
+    const vacSkillCount = matchRows.length;
+    const cvSkillCount  = new Set(matchRows.map(r => String(r.cv_label).trim())).size;
 
-    const cvByLabel = new Map();
-    for (const cv of cvRows) {
-        cvByLabel.set(String(cv.esco_label).trim(), cv);
-    }
+    const skillDetails = matchRows.map(r => ({
+        vacancy_skill:    String(r.vac_label).trim(),
+        nearest_cv_skill: String(r.cv_label).trim(),
+        best_similarity:  round4(Number(r.similarity)),
+        match_type: String(r.vac_label).trim() === String(r.cv_label).trim()
+            ? "exact" : "semantic"
+    }));
 
-    for (const vac of vacRows) {
-        const vacLabel = String(vac.esco_label).trim();
-        let bestMatch = null;
-        let bestSimilarity = 0;
-        let matchType = "none";
+    const sumBestSim = skillDetails.reduce((s, r) => s + r.best_similarity, 0);
 
-        // 1) Точний збіг esco_label
-        if (cvByLabel.has(vacLabel)) {
-            bestMatch = cvByLabel.get(vacLabel);
-            bestSimilarity = 1.0;
-            matchType = "exact_label";
-            exactMatchCount++;
-        }
-        // 2) Семантичний збіг через pgvector cosine similarity
-        else if (vac.embedding) {
-            try {
-                const { rows: simRows } = await client.query(
-                    `SELECT esco_uri, esco_label, confidence,
-                            1 - (embedding <=> $1::vector) AS similarity
-                     FROM cv_skill_mappings
-                     WHERE document_id = $2
-                       AND esco_label IS NOT NULL
-                       AND confidence >= $3
-                       AND embedding IS NOT NULL
-                     ORDER BY embedding <=> $1::vector
-                     LIMIT 1`,
-                    [vac.embedding, resumeDocId, minConfidence]
-                );
-                if (simRows.length > 0 && Number(simRows[0].similarity) >= similarityThreshold) {
-                    bestMatch = simRows[0];
-                    bestSimilarity = Number(simRows[0].similarity);
-                    matchType = "semantic_embedding";
-                    semanticMatchCount++;
-                }
-            } catch {
-                // Fallback: cosine similarity у JS
-                const vacEmb = parseVector(vac.embedding);
-                if (vacEmb) {
-                    for (const cv of cvRows) {
-                        const cvEmb = parseVector(cv.embedding);
-                        if (!cvEmb) continue;
-                        const sim = cosineSimilarityJS(vacEmb, cvEmb);
-                        if (sim > bestSimilarity) {
-                            bestSimilarity = sim;
-                            bestMatch = cv;
-                        }
-                    }
-                    if (bestSimilarity >= similarityThreshold) {
-                        matchType = "semantic_js_fallback";
-                        semanticMatchCount++;
-                    } else {
-                        bestMatch = null;
-                    }
-                }
-            }
-        }
-        // 3) Збіг за esco_uri
-        else {
-            const cvByUri = cvRows.find(cv => cv.esco_uri && cv.esco_uri === vac.esco_uri);
-            if (cvByUri) {
-                bestMatch = cvByUri;
-                bestSimilarity = 1.0;
-                matchType = "exact_uri";
-                exactMatchCount++;
-            }
-        }
-
-        if (bestMatch) {
-            matchedSkills.push({
-                vacancy_skill: vacLabel,
-                vacancy_uri: vac.esco_uri,
-                matched_skill: String(bestMatch.esco_label).trim(),
-                matched_uri: bestMatch.esco_uri,
-                similarity: round4(bestSimilarity),
-                match_type: matchType,
-                vacancy_confidence: Number(vac.confidence ?? 0),
-                cv_confidence: Number(bestMatch.confidence ?? 0)
-            });
-        }
-    }
-
-    let weightedMatched = 0;
-    let weightedTotal = 0;
-
-    for (const vac of vacRows) {
-        const vacConf = Number(vac.confidence ?? 0);
-        weightedTotal += vacConf;
-        const match = matchedSkills.find(m => m.vacancy_uri === vac.esco_uri);
-        if (match) {
-            weightedMatched += match.similarity * Math.min(match.vacancy_confidence, match.cv_confidence);
-        }
-    }
-
-    const rawScore = weightedTotal > 0 ? weightedMatched / weightedTotal : 0;
-    const totalMatched = exactMatchCount + semanticMatchCount;
+    // Фінальний score = середнє арифметичне найкращих відстаней
+    const rawScore      = skillDetails.length > 0 ? round4(sumBestSim / skillDetails.length) : 0;
+    const exactCount    = skillDetails.filter(s => s.match_type === "exact").length;
+    const semanticCount = skillDetails.filter(s => s.match_type === "semantic").length;
 
     return buildCriterionResult({
         criterion,
         passed: rawScore > 0,
         rawScore,
-        explanation: `semantic match: ${totalMatched}/${vacRows.length} skills `
-            + `(${exactMatchCount} exact + ${semanticMatchCount} semantic, `
-            + `threshold=${similarityThreshold})`,
+        explanation: `average best match: ${round4(rawScore * 100)}% `
+            + `(${exactCount} exact + ${semanticCount} semantic / ${skillDetails.length} vacancy skills)`,
         details: {
-            method: "semantic_embedding",
-            similarityThreshold,
+            method:        "average_best_match",
             minConfidence,
             resumeDocId,
             vacDocId,
-            cvSkillCount: cvRows.length,
-            vacSkillCount: vacRows.length,
-            matchedSkills,
-            exactMatchCount,
-            semanticMatchCount,
-            totalMatchedCount: totalMatched,
-            weightedMatchedConfidence: round4(weightedMatched),
-            weightedVacancyConfidence: round4(weightedTotal)
+            cvSkillCount,
+            vacSkillCount,
+            exactCount,
+            semanticCount,
+            skillDetails
         }
     });
 }
@@ -609,18 +547,10 @@ async function scoreSemanticSkillMatch(client, resume, criterion, vacancyId, con
 async function scoreSkillMappingMatch(client, resume, criterion, vacancyId, config) {
     const minConfidence = Number(config.min_confidence ?? 0.7);
 
-    const { rows: resumeLinkRows } = await client.query(
-        `SELECT mapping_document_id
-         FROM resume_mapping_links
-         WHERE resume_id=$1
-             LIMIT 1`,
-        [String(resume.id)]
-    );
-
-    const resumeMappingDocumentId =
-        resumeLinkRows.length > 0 ? String(resumeLinkRows[0].mapping_document_id) : null;
-
-    const vacancyMappingDocumentId = await resolveVacancyMappingDocumentId(client, vacancyId);
+    const [resumeMappingDocumentId, vacancyMappingDocumentId] = await Promise.all([
+        resolveResumeMappingDocumentId(client, resume.id),
+        resolveVacancyMappingDocumentId(client, vacancyId)
+    ]);
 
     if (!resumeMappingDocumentId) {
         return buildCriterionResult({
@@ -987,9 +917,9 @@ function scoreRecencyMatch(resume, criterion, config) {
     }
 
     let rawScore = 0;
-    if (ageDays <= freshDays) rawScore = 1;
-    else if (ageDays <= acceptableDays) rawScore = 0.6;
-    else if (ageDays <= staleDays) rawScore = 0.25;
+    if (ageDays <= freshDays)          rawScore = RECENCY_SCORE_FRESH;
+    else if (ageDays <= acceptableDays) rawScore = RECENCY_SCORE_ACCEPTABLE;
+    else if (ageDays <= staleDays)      rawScore = RECENCY_SCORE_STALE;
 
     return buildCriterionResult({
         criterion,
@@ -1269,30 +1199,72 @@ async function evaluateCriterion(client, resume, criterion, vacancyId) {
  * @param {number} analyzeCount
  * @returns {Promise<ScoringContext>}
  */
-async function loadScoringContext(client, vacancyId, analyzeCount) {
-    const { rows: criteria } = await client.query(
-        `SELECT id, vacancy_id, name, weight, calc_type, config, is_enabled
-         FROM criteria
-         WHERE vacancy_id=$1 AND is_enabled=true
-         ORDER BY id`,
-        [String(vacancyId)]
-    );
+/**
+ * Вибирає кандидатів для скорингу.
+ * Стратегія 1: сортування за косинусною схожістю ESCO-векторів (pgvector avg).
+ * Стратегія 2 (fallback): перші N резюме за id, якщо ESCO маппінгів немає.
+ *
+ * @param {import("pg").PoolClient} client
+ * @param {string|number} vacancyId
+ * @param {number} limit
+ * @returns {Promise<Object[]>}
+ */
+async function selectResumes(client, vacancyId, limit) {
+    const vacDocId = await resolveVacancyMappingDocumentId(client, String(vacancyId));
 
-    const { rows: resumes } = await client.query(
-        `SELECT id,
-                candidate_name,
-                city,
-                driver_license,
-                desired_salary,
-                NULL::text AS experience,
-                 NULL::numeric AS experience_years,
-                 markdown,
-                creation_date
-         FROM resumes
-         ORDER BY id
-             LIMIT $1`,
-        [analyzeCount]
+    if (vacDocId) {
+        const { rows: avgRows } = await client.query(
+            `SELECT avg(embedding) AS avg_vec
+             FROM vac_skill_mappings
+             WHERE document_id = $1 AND embedding IS NOT NULL AND esco_label IS NOT NULL`,
+            [vacDocId]
+        );
+        const vacAvgVec = avgRows[0]?.avg_vec;
+
+        if (vacAvgVec) {
+            const { rows } = await client.query(
+                `SELECT r.id, r.candidate_name, r.city, r.driver_license,
+                        r.desired_salary,
+                        NULL::text    AS experience,
+                        NULL::numeric AS experience_years,
+                        r.markdown, r.creation_date,
+                        1 - (avg(m.embedding) <=> $2::vector) AS skill_sim
+                 FROM resumes r
+                 JOIN resume_mapping_links l ON l.resume_id = r.id
+                 JOIN cv_skill_mappings m    ON m.document_id = l.mapping_document_id
+                 WHERE m.embedding IS NOT NULL AND m.esco_label IS NOT NULL
+                 GROUP BY r.id, r.candidate_name, r.city, r.driver_license,
+                          r.desired_salary, r.markdown, r.creation_date
+                 ORDER BY skill_sim DESC
+                 LIMIT $1`,
+                [limit, vacAvgVec]
+            );
+            if (rows.length > 0) return rows;
+        }
+    }
+
+    // Fallback: немає ESCO маппінгів для вакансії — беремо перші N за id
+    const { rows } = await client.query(
+        `SELECT id, candidate_name, city, driver_license, desired_salary,
+                NULL::text AS experience, NULL::numeric AS experience_years,
+                markdown, creation_date
+         FROM resumes ORDER BY id LIMIT $1`,
+        [limit]
     );
+    return rows;
+}
+
+async function loadScoringContext(client, vacancyId, analyzeCount) {
+    const [{ rows: criteria }, resumes] = await Promise.all([
+        client.query(
+            `SELECT id, vacancy_id, name, weight, calc_type, config, is_enabled
+             FROM criteria
+             WHERE vacancy_id=$1 AND is_enabled=true
+             ORDER BY id`,
+            [String(vacancyId)]
+        ),
+        selectResumes(client, vacancyId, analyzeCount)
+    ]);
 
     return { criteria, resumes };
 }
@@ -1443,26 +1415,30 @@ async function saveEvaluationWithDetails(client, {
                 passed_all_required: requiredState.passedAllRequired,
                 required_penalty: SCORING_RULES.excludedCandidateScore,
                 failed_required_criteria: requiredState.failedRequiredCriteria,
-                excluded_by_required: requiredState.excludedByRequired
+                excluded_by_required: requiredState.excludedByRequired,
+                esco_skill_sim: resume.skill_sim != null ? Math.round(Number(resume.skill_sim) * 100) / 100 : null
             })
         ]
     );
 
     const evaluationId = evalRows[0].id;
 
-    for (const row of detailsRows) {
+    // Batch INSERT замість N окремих запитів (N = кількість критеріїв)
+    if (detailsRows.length > 0) {
+        const values = [];
+        const placeholders = detailsRows.map((row, i) => {
+            const base = i * 6;
+            values.push(
+                evaluationId, row.criteriaId, row.rawScore,
+                row.weightedScore, row.explanation, JSON.stringify(row.details)
+            );
+            return `($${base+1},$${base+2},$${base+3},$${base+4},$${base+5},$${base+6}::jsonb)`;
+        });
         await client.query(
             `INSERT INTO evaluation_details
              (evaluation_id, criteria_id, raw_score, weighted_score, explanation, details)
-             VALUES ($1,$2,$3,$4,$5,$6::jsonb)`,
-            [
-                evaluationId,
-                row.criteriaId,
-                row.rawScore,
-                row.weightedScore,
-                row.explanation,
-                JSON.stringify(row.details)
-            ]
+             VALUES ${placeholders.join(",")}`,
+            values
         );
     }
 

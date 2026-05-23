@@ -2,7 +2,7 @@ import RadarChart from "./RadarChart.jsx";
 
 function formatFailedCriteria(list) {
     if (!Array.isArray(list) || list.length === 0) return "—";
-    return list.map((item) => item?.name || item?.calc_type || "Unknown").join(", ");
+    return list.map((item) => item?.name || item?.calc_type || "Невідомо").join(", ");
 }
 
 function RequiredMiniCard({ meta }) {
@@ -16,38 +16,29 @@ function RequiredMiniCard({ meta }) {
     if (!hasRequiredInfo) {
         return (
             <div style={styles.requiredCardMuted}>
-                <strong>Required criteria:</strong> not evaluated for this run
+                <strong>Обов'язкові критерії:</strong> не оцінювалися в цьому запуску
             </div>
         );
     }
 
-    const requiredTotal = Number(meta.required_total ?? 0);
-    const requiredPassed = Number(meta.required_passed ?? 0);
+    const requiredTotal   = Number(meta.required_total ?? 0);
+    const requiredPassed  = Number(meta.required_passed ?? 0);
     const requiredPenalty = Number(meta.required_penalty ?? 0);
-    const passedAllRequired = Boolean(meta.passed_all_required);
-    const failedRequiredCriteria = meta.failed_required_criteria || [];
+    const passedAll       = Boolean(meta.passed_all_required);
+    const failedList      = meta.failed_required_criteria || [];
 
     if (requiredTotal === 0) {
         return (
             <div style={styles.requiredCardMuted}>
                 <div style={styles.requiredHeader}>
-                    <strong>Required criteria</strong>
-                    <span style={styles.requiredBadge}>Not configured</span>
+                    <strong>Обов'язкові критерії</strong>
+                    <span style={styles.requiredBadge}>Не налаштовано</span>
                 </div>
                 <div style={styles.requiredGrid}>
-                    <div>
-                        <span style={styles.mutedSmall}>Passed</span>
-                        <div><strong>0 / 0</strong></div>
-                    </div>
-
-                    <div>
-                        <span style={styles.mutedSmall}>Penalty</span>
-                        <div><strong>0</strong></div>
-                    </div>
-
+                    <MiniStat label="Пройдено" value="0 / 0" />
+                    <MiniStat label="Штраф" value="0" />
                     <div style={{ gridColumn: "1 / -1" }}>
-                        <span style={styles.mutedSmall}>Failed required criteria</span>
-                        <div><strong>—</strong></div>
+                        <MiniStat label="Провалені критерії" value="—" />
                     </div>
                 </div>
             </div>
@@ -55,57 +46,45 @@ function RequiredMiniCard({ meta }) {
     }
 
     return (
-        <div
-            style={{
-                ...styles.requiredCard,
-                ...(passedAllRequired ? styles.requiredOk : styles.requiredFail)
-            }}
-        >
+        <div style={{ ...styles.requiredCard, ...(passedAll ? styles.requiredOk : styles.requiredFail) }}>
             <div style={styles.requiredHeader}>
-                <strong>Required criteria</strong>
-                <span style={styles.requiredBadge}>
-                    {passedAllRequired ? "Passed" : "Failed"}
+                <strong>Обов'язкові критерії</strong>
+                <span style={{ ...styles.requiredBadge, color: passedAll ? "#16a34a" : "#dc2626" }}>
+                    {passedAll ? "✓ Пройдено" : "✗ Провалено"}
                 </span>
             </div>
-
             <div style={styles.requiredGrid}>
-                <div>
-                    <span style={styles.mutedSmall}>Passed</span>
-                    <div><strong>{requiredPassed} / {requiredTotal}</strong></div>
-                </div>
-
-                <div>
-                    <span style={styles.mutedSmall}>Penalty</span>
-                    <div><strong>{requiredPenalty}</strong></div>
-                </div>
-
+                <MiniStat label="Пройдено" value={`${requiredPassed} / ${requiredTotal}`} />
+                <MiniStat label="Штраф" value={requiredPenalty} />
                 <div style={{ gridColumn: "1 / -1" }}>
-                    <span style={styles.mutedSmall}>Failed required criteria</span>
-                    <div><strong>{formatFailedCriteria(failedRequiredCriteria)}</strong></div>
+                    <MiniStat label="Провалені критерії" value={formatFailedCriteria(failedList)} />
                 </div>
             </div>
         </div>
     );
 }
-export default function CompareCandidates({
-                                              compareData,
-                                              selectedCompareIds,
-                                              onToggleCandidate,
-                                              topItems
-                                          }) {
+
+function MiniStat({ label, value }) {
+    return (
+        <div>
+            <span style={styles.mutedSmall}>{label}</span>
+            <div><strong>{value}</strong></div>
+        </div>
+    );
+}
+
+export default function CompareCandidates({ compareData, selectedCompareIds, onToggleCandidate, topItems }) {
     const compareItems = Array.isArray(compareData?.items) ? compareData.items : [];
 
     return (
         <div style={styles.card}>
-            <h3 style={styles.title}>Compare candidates</h3>
+            <h3 style={styles.title}>Порівняння кандидатів</h3>
 
             <div style={styles.selectorBlock}>
-                <p style={styles.label}>Select 2 candidates for comparison:</p>
-
+                <p style={styles.label}>Оберіть 2 кандидати для порівняння:</p>
                 <div style={styles.checkboxGrid}>
                     {(topItems || []).map((item) => {
                         const checked = selectedCompareIds.includes(String(item.resume_id));
-
                         return (
                             <label key={item.resume_id} style={styles.checkboxItem}>
                                 <input
@@ -114,7 +93,8 @@ export default function CompareCandidates({
                                     onChange={() => onToggleCandidate?.(String(item.resume_id))}
                                 />
                                 <span>
-                                    {item.candidate_name || "Unknown"} ({item.resume_id})
+                                    {item.candidate_name || "Невідомо"}{" "}
+                                    <span style={{ color: "#94a3b8", fontSize: "12px" }}>({item.resume_id})</span>
                                 </span>
                             </label>
                         );
@@ -123,7 +103,7 @@ export default function CompareCandidates({
             </div>
 
             {compareItems.length !== 2 ? (
-                <p>Select exactly 2 candidates to view comparison.</p>
+                <p style={styles.hint}>Оберіть рівно 2 кандидати для перегляду порівняння.</p>
             ) : (
                 <RadarChart candidates={compareItems} />
             )}
@@ -133,22 +113,32 @@ export default function CompareCandidates({
                     {compareItems.map((candidate) => (
                         <div key={candidate.resume_id} style={styles.compareColumn}>
                             <div style={styles.topCard}>
-                                <h4 style={{ marginTop: 0 }}>{candidate.candidate_name || "Unknown"}</h4>
-                                <p><strong>Resume ID:</strong> {candidate.resume_id}</p>
-                                <p><strong>City:</strong> {candidate.city || "—"}</p>
-                                <p><strong>Total score:</strong> {candidate.total_score}</p>
-
+                                <h4 style={styles.candName}>{candidate.candidate_name || "Невідомо"}</h4>
+                                <div style={styles.candMeta}>
+                                    <span><strong>Resume ID:</strong> {candidate.resume_id}</span>
+                                    <span><strong>Місто:</strong> {candidate.city || "—"}</span>
+                                    <span style={styles.scoreRow}>
+                                        <strong>Загальний скор:</strong>
+                                        <span style={styles.scoreBadge}>{Number(candidate.total_score).toFixed(2)}</span>
+                                    </span>
+                                </div>
                                 <RequiredMiniCard meta={candidate.meta} />
                             </div>
 
                             <div style={styles.detailsList}>
                                 {(candidate.details || []).map((detail, index) => (
                                     <div key={`${candidate.resume_id}-${index}`} style={styles.detailCard}>
-                                        <p><strong>{detail.name}</strong></p>
-                                        <p><span style={styles.muted}>Type:</span> {detail.calc_type}</p>
-                                        <p><span style={styles.muted}>Raw score:</span> {detail.raw_score}</p>
-                                        <p><span style={styles.muted}>Weighted score:</span> {detail.weighted_score}</p>
-                                        <p>{detail.explanation}</p>
+                                        <div style={styles.detailHeader}>
+                                            <strong style={styles.detailName}>{detail.name}</strong>
+                                            <span style={styles.detailType}>{detail.calc_type}</span>
+                                        </div>
+                                        <div style={styles.detailScores}>
+                                            <span style={styles.muted}>Сирий скор: <strong>{detail.raw_score}</strong></span>
+                                            <span style={styles.muted}>З вагою: <strong>{detail.weighted_score}</strong></span>
+                                        </div>
+                                        {detail.explanation && (
+                                            <p style={styles.explanation}>{detail.explanation}</p>
+                                        )}
                                     </div>
                                 ))}
                             </div>
@@ -160,103 +150,70 @@ export default function CompareCandidates({
     );
 }
 
-
 const styles = {
     card: {
-        background: "#fff",
-        border: "1px solid #ddd",
-        borderRadius: "12px",
-        padding: "16px"
+        background: "#fff", border: "1px solid #e2e8f0", borderRadius: "16px",
+        padding: "24px", display: "grid", gap: "20px",
+        boxShadow: "0 1px 3px rgba(0,0,0,0.05)"
     },
-    title: {
-        marginTop: 0
-    },
-    selectorBlock: {
-        marginBottom: "16px"
-    },
-    label: {
-        marginBottom: "8px"
-    },
-    checkboxGrid: {
-        display: "grid",
-        gap: "8px",
-        marginBottom: "16px"
-    },
-    checkboxItem: {
-        display: "flex",
-        alignItems: "center",
-        gap: "8px"
-    },
-    columns: {
-        display: "grid",
-        gridTemplateColumns: "1fr 1fr",
-        gap: "18px"
-    },
-    compareColumn: {
-        display: "grid",
-        gap: "12px"
-    },
+    title:  { margin: 0, fontSize: "17px", fontWeight: 700, color: "#0f172a" },
+    label:  { margin: "0 0 8px", fontSize: "14px", color: "#374151" },
+    hint:   { margin: 0, color: "#94a3b8", fontSize: "14px" },
+
+    selectorBlock: { display: "grid", gap: "4px" },
+    checkboxGrid: { display: "grid", gap: "6px" },
+    checkboxItem: { display: "flex", alignItems: "center", gap: "8px", fontSize: "14px", cursor: "pointer" },
+
+    columns: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "18px" },
+    compareColumn: { display: "grid", gap: "12px" },
+
     topCard: {
-        background: "#f7f9fc",
-        borderRadius: "10px",
-        padding: "14px"
+        background: "#f8fafc", border: "1px solid #e2e8f0",
+        borderRadius: "14px", padding: "16px", display: "grid", gap: "10px"
     },
-    detailsList: {
-        display: "grid",
-        gap: "10px"
+    candName: { margin: 0, fontSize: "16px", fontWeight: 700, color: "#0f172a" },
+    candMeta: { display: "grid", gap: "4px", fontSize: "13px", color: "#374151" },
+    scoreRow: { display: "flex", alignItems: "center", gap: "8px" },
+    scoreBadge: {
+        background: "#2563eb", color: "#fff", fontWeight: 700, fontSize: "14px",
+        padding: "2px 10px", borderRadius: "6px"
     },
+
+    detailsList: { display: "grid", gap: "8px" },
     detailCard: {
-        background: "#fafafa",
-        borderRadius: "10px",
-        padding: "12px",
-        border: "1px solid #f0f0f0"
+        background: "#f8fafc", border: "1px solid #f1f5f9",
+        borderRadius: "10px", padding: "12px", display: "grid", gap: "6px"
     },
-    muted: {
-        color: "#666"
+    detailHeader: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: "8px" },
+    detailName: { fontSize: "13px", color: "#0f172a" },
+    detailType: {
+        fontSize: "11px", color: "#3730a3", background: "#eef2ff",
+        padding: "2px 8px", borderRadius: "4px", fontWeight: 600, flexShrink: 0
     },
-    mutedSmall: {
-        color: "#64748b",
-        fontSize: "12px"
-    },
+    detailScores: { display: "flex", gap: "16px", fontSize: "12px" },
+    explanation: { margin: 0, fontSize: "12px", color: "#64748b", lineHeight: 1.5 },
+
+    muted:      { color: "#64748b" },
+    mutedSmall: { color: "#64748b", fontSize: "12px" },
+
     requiredCard: {
-        marginTop: "10px",
-        borderRadius: "10px",
-        padding: "10px",
-        border: "1px solid"
+        borderRadius: "10px", padding: "12px", border: "1px solid"
     },
-    requiredOk: {
-        background: "#f0fdf4",
-        borderColor: "#86efac"
-    },
-    requiredFail: {
-        background: "#fff7ed",
-        borderColor: "#fdba74"
-    },
+    requiredOk:   { background: "#f0fdf4", borderColor: "#86efac" },
+    requiredFail: { background: "#fff7ed", borderColor: "#fdba74" },
     requiredCardMuted: {
-        marginTop: "10px",
-        borderRadius: "10px",
-        padding: "10px",
-        background: "#f8fafc",
-        border: "1px solid #e2e8f0"
+        borderRadius: "10px", padding: "12px",
+        background: "#f8fafc", border: "1px solid #e2e8f0"
     },
     requiredHeader: {
-        display: "flex",
-        justifyContent: "space-between",
-        alignItems: "center",
-        gap: "10px",
-        marginBottom: "10px"
+        display: "flex", justifyContent: "space-between",
+        alignItems: "center", gap: "10px", marginBottom: "10px"
     },
     requiredBadge: {
-        background: "#fff",
-        border: "1px solid #ddd",
-        borderRadius: "999px",
-        padding: "4px 8px",
-        fontSize: "12px",
-        fontWeight: 700
+        background: "#fff", border: "1px solid #e2e8f0", borderRadius: "999px",
+        padding: "3px 10px", fontSize: "12px", fontWeight: 700
     },
     requiredGrid: {
-        display: "grid",
-        gridTemplateColumns: "1fr 1fr",
-        gap: "10px"
+        display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px"
     }
 };

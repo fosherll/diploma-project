@@ -12,148 +12,98 @@ import TopCandidatesTable from "../components/candidates/TopCandidatesTable.jsx"
 import CandidateSummary from "../components/candidates/CandidateSummary.jsx";
 import SkillsPreview from "../components/candidates/SkillsPreview.jsx";
 import CompareCandidates from "../components/candidates/CompareCandidates.jsx";
-import CandidateClusters from "../components/candidates/CandidateClusters.jsx";
 import SkillGap from "../components/candidates/SkillGap.jsx";
 import VacancyRecommendations from "../components/candidates/VacancyRecommendations.jsx";
 
 export default function VacancyDetailsPage() {
     const { vacancyId } = useParams();
-
     const [vacancy, setVacancy] = useState(null);
     const [topCount, setTopCount] = useState(4);
     const [analyzeCount, setAnalyzeCount] = useState(100);
 
-    const {
-        criteria,
-        setCriteria,
-        criteriaDraft,
-        setCriteriaDraft,
-        reloadCriteria,
-        saveCriteriaBeforeScoring
-    } = useCriteriaEditor(vacancyId);
-
-    const {
-        runs,
-        setRuns,
-        selectedRunId,
-        topData,
-        selectedCandidate,
-        summary,
-        skillsPreview,
-        selectedCompareIds,
-        compareData,
-        reloadRuns,
-        loadTopForRun,
-        loadLatestTop,
-        handleCandidateSelect,
-        handleSelectRun,
-        handleToggleCandidate,
-        clearRunCache
-    } = useScoringRuns(vacancyId, topCount);
+    const { criteria, setCriteria, criteriaDraft, setCriteriaDraft, reloadCriteria, saveCriteriaBeforeScoring } = useCriteriaEditor(vacancyId);
+    const { runs, setRuns, selectedRunId, topData, selectedCandidate, summary, skillsPreview, selectedCompareIds, compareData, reloadRuns, loadTopForRun, loadLatestTop, handleCandidateSelect, handleSelectRun, handleToggleCandidate, clearRunCache } = useScoringRuns(vacancyId, topCount);
 
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState("");
-
     const isDemoVacancy = String(vacancyId) === "6348037";
 
     async function loadInitialData() {
         try {
             setLoading(true);
             setError("");
-
             const [vacancyData, criteriaData, runsData] = await Promise.all([
                 getVacancyById(vacancyId).catch(() => null),
                 reloadCriteria().catch(() => []),
                 reloadRuns().catch(() => [])
             ]);
-
             setVacancy(vacancyData);
             setCriteria(criteriaData || []);
             setRuns(runsData || []);
-
-            try {
-                await loadLatestTop(topCount);
-            } catch {
-                // hook сам сбросит данные, если результатов нет
-            }
+            try { await loadLatestTop(topCount); } catch { /* no results yet */ }
         } catch (err) {
-            setError(err.message || "Failed to load vacancy page");
+            setError(err.message || "Помилка завантаження сторінки вакансії");
         } finally {
             setLoading(false);
         }
     }
 
-    useEffect(() => {
-        loadInitialData();
-    }, [vacancyId]);
+    useEffect(() => { loadInitialData(); }, [vacancyId]);
 
     async function handleScoringFinished(result) {
         clearRunCache();
-
         const [runsData, criteriaData] = await Promise.all([
             reloadRuns().catch(() => []),
             reloadCriteria().catch(() => [])
         ]);
-
         setRuns(runsData || []);
         setCriteria(criteriaData || []);
-
-        if (result?.runId) {
-            await loadTopForRun(result.runId, topCount);
-        } else {
-            await loadLatestTop(topCount);
-        }
+        if (result?.runId) await loadTopForRun(result.runId, topCount);
+        else await loadLatestTop(topCount);
     }
 
     async function handleTopCountChange(value) {
         const safeValue = Math.max(1, Number(value) || 4);
         setTopCount(safeValue);
-
-        if (selectedRunId) {
-            await loadTopForRun(selectedRunId, safeValue);
-        } else {
-            await loadLatestTop(safeValue);
-        }
+        if (selectedRunId) await loadTopForRun(selectedRunId, safeValue);
+        else await loadLatestTop(safeValue);
     }
 
-    if (loading) return <p>Loading...</p>;
-    if (error) return <p>{error}</p>;
-    if (!vacancy && !isDemoVacancy) return <p>Vacancy not found.</p>;
+    if (loading) return <div style={styles.status}>Завантаження...</div>;
+    if (error)   return <div style={styles.errorMsg}>{error}</div>;
+    if (!vacancy && !isDemoVacancy) return <div style={styles.status}>Вакансію не знайдено.</div>;
 
     return (
         <div style={styles.page}>
-            {!isDemoVacancy ? (
-                <div style={styles.notice}>
-                    <strong>Note:</strong> this vacancy is not preconfigured for the full demo.
-                    For the best demo flow, use{" "}
-                    <Link to="/vacancies/6348037">the prepared vacancy</Link>.
+
+            {/* Шапка вакансії */}
+            <div style={styles.vacancyHeader}>
+                <Link to="/" style={styles.backLink}>← Всі вакансії</Link>
+                <h1 style={styles.vacancyTitle}>{vacancy?.title || "Демо вакансія"}</h1>
+                <div style={styles.vacancyMeta}>
+                    {vacancy?.location && <MetaChip label="📍" value={vacancy.location} />}
+                    {vacancy?.employment_type && <MetaChip label="💼" value={vacancy.employment_type} />}
+                    <MetaChip label="ID" value={vacancy?.id || vacancyId} />
                 </div>
-            ) : null}
+                {!isDemoVacancy && (
+                    <div style={styles.notice}>
+                        Для повної демонстрації використайте{" "}
+                        <Link to="/vacancies/6348037" style={styles.noticeLink}>підготовлену вакансію</Link>.
+                    </div>
+                )}
+            </div>
 
-            <section style={styles.section}>
-                <h1>{vacancy?.title || "Demo vacancy 6348037"}</h1>
-                <p><strong>ID:</strong> {vacancy?.id || vacancyId}</p>
-                <p><strong>Location:</strong> {vacancy?.location || "—"}</p>
-                <p><strong>Employment:</strong> {vacancy?.employment_type || "—"}</p>
-            </section>
+            {/* Критерії */}
+            <Section title="Редактор критеріїв">
+                <CriteriaForm vacancyId={vacancyId} criteria={criteria} onSaved={reloadCriteria} onDraftChange={setCriteriaDraft} />
+            </Section>
 
-            <section style={styles.section}>
-                <h2>Criteria editor</h2>
-                <CriteriaForm
-                    vacancyId={vacancyId}
-                    criteria={criteria}
-                    onSaved={reloadCriteria}
-                    onDraftChange={setCriteriaDraft}
-                />
-            </section>
-
-            <section style={styles.section}>
-                <h2>Current criteria</h2>
+            <Section title="Поточні критерії">
                 <CriteriaList criteria={criteria} />
-            </section>
+            </Section>
 
-            <section style={styles.section}>
-                <h2>Scoring</h2>
+            {/* Скоринг */}
+            <Section title="Запуск скорингу">
                 <RunScoringButton
                     vacancyId={vacancyId}
                     topCount={topCount}
@@ -163,85 +113,149 @@ export default function VacancyDetailsPage() {
                     onFinished={handleScoringFinished}
                     onBeforeRun={saveCriteriaBeforeScoring}
                 />
-            </section>
+            </Section>
 
-            <section style={styles.section}>
-                <h2>Runs history</h2>
-                <RunsHistory
-                    runs={runs}
-                    selectedRunId={selectedRunId}
-                    onSelectRun={handleSelectRun}
-                />
-            </section>
+            <Section title="Історія запусків">
+                <RunsHistory runs={runs} selectedRunId={selectedRunId} onSelectRun={handleSelectRun} />
+            </Section>
 
-            <section style={styles.section}>
+            <Section>
                 <RunsComparison runs={runs} vacancyId={vacancyId} />
-            </section>
+            </Section>
 
-            <section style={styles.section}>
-                <h2>Top candidates</h2>
+            {/* Результати */}
+            <Section title="Топ кандидати">
                 <TopCandidatesTable
                     items={topData?.items || []}
                     selectedResumeId={selectedCandidate?.resume_id}
                     onSelect={handleCandidateSelect}
                 />
-            </section>
+            </Section>
 
-            <section style={styles.section}>
-                <CandidateSummary
-                    summary={summary}
-                    vacancyId={vacancyId}
-                    vacancyTitle={vacancy?.title}
-                />
-                <VacancyRecommendations
-                    vacancyId={vacancyId}
-                    resumeId={selectedCandidate?.resume_id}
-                />
-            </section>
+            {/* Деталі кандидата */}
+            {selectedCandidate && (
+                <div style={styles.candidateGrid}>
+                    <div style={styles.candidateMain}>
+                        <SectionLabel>Картка кандидата</SectionLabel>
+                        <CandidateSummary summary={summary} />
+                        <div style={{ marginTop: "16px" }}>
+                            <SkillsPreview preview={skillsPreview} />
+                        </div>
+                    </div>
+                    <div style={styles.candidateSide}>
+                        <SectionLabel>Рекомендовані вакансії</SectionLabel>
+                        <VacancyRecommendations vacancyId={vacancyId} resumeId={selectedCandidate?.resume_id} />
+                    </div>
+                </div>
+            )}
 
-            <section style={styles.section}>
-                <SkillsPreview preview={skillsPreview} />
-            </section>
-
-            <section style={styles.section}>
-                <h2>Skill gap analysis</h2>
+            <Section title="Аналіз прогалин у навичках">
                 <SkillGap vacancyId={vacancyId} runId={selectedRunId} />
-            </section>
+            </Section>
 
-            <section style={styles.section}>
-                <h2>Candidate clusters</h2>
-                <CandidateClusters
-                    vacancyId={vacancyId}
-                    runId={selectedRunId}
-                    onSelectCandidate={handleCandidateSelect}
-                />
-            </section>
-
-            <section style={styles.section}>
+            <Section>
                 <CompareCandidates
                     compareData={compareData}
                     selectedCompareIds={selectedCompareIds}
                     onToggleCandidate={handleToggleCandidate}
                     topItems={topData?.items || []}
                 />
-            </section>
+            </Section>
         </div>
     );
 }
 
-const styles = {
-    page: {
-        display: "grid",
-        gap: "24px"
+function Section({ title, children }) {
+    return (
+        <div style={sectionStyles.wrap}>
+            {title && <h2 style={sectionStyles.title}>{title}</h2>}
+            {children}
+        </div>
+    );
+}
+
+function SectionLabel({ children }) {
+    return <h3 style={sectionStyles.label}>{children}</h3>;
+}
+
+function MetaChip({ label, value }) {
+    return (
+        <span style={chipStyles.chip}>
+            <span style={chipStyles.label}>{label}</span>
+            {value}
+        </span>
+    );
+}
+
+const sectionStyles = {
+    wrap:  { display: "grid", gap: "12px" },
+    title: { margin: 0, fontSize: "18px", fontWeight: 700, color: "#0f172a" },
+    label: { margin: "0 0 10px", fontSize: "15px", fontWeight: 600, color: "#374151" }
+};
+
+const chipStyles = {
+    chip: {
+        display: "inline-flex",
+        alignItems: "center",
+        gap: "5px",
+        background: "#f1f5f9",
+        border: "1px solid #e2e8f0",
+        borderRadius: "8px",
+        padding: "4px 12px",
+        fontSize: "13px",
+        color: "#475569"
     },
-    section: {
+    label: { color: "#94a3b8", fontSize: "11px", fontWeight: 600 }
+};
+
+const styles = {
+    page: { display: "grid", gap: "28px" },
+
+    vacancyHeader: {
+        background: "#fff",
+        border: "1px solid #e2e8f0",
+        borderRadius: "16px",
+        padding: "24px",
         display: "grid",
-        gap: "12px"
+        gap: "12px",
+        boxShadow: "0 1px 3px rgba(0,0,0,0.05)"
+    },
+    backLink: {
+        textDecoration: "none",
+        color: "#64748b",
+        fontSize: "13px",
+        fontWeight: 500
+    },
+    vacancyTitle: {
+        margin: 0,
+        fontSize: "26px",
+        fontWeight: 800,
+        color: "#0f172a"
+    },
+    vacancyMeta: {
+        display: "flex",
+        flexWrap: "wrap",
+        gap: "8px"
     },
     notice: {
-        background: "#fff8db",
-        border: "1px solid #f0d98a",
+        background: "#fffbeb",
+        border: "1px solid #fde68a",
         borderRadius: "10px",
-        padding: "14px"
-    }
+        padding: "10px 14px",
+        fontSize: "13px",
+        color: "#92400e"
+    },
+    noticeLink: { color: "#d97706", fontWeight: 600 },
+
+    candidateGrid: {
+        display: "grid",
+        gridTemplateColumns: "1fr 340px",
+        gap: "20px",
+        alignItems: "start"
+    },
+    candidateMain: { display: "grid", gap: "0" },
+    candidateSide: { display: "grid", gap: "0" },
+
+    status:   { color: "#64748b", textAlign: "center", padding: "60px 0" },
+    errorMsg: { color: "#dc2626", textAlign: "center", padding: "60px 0" }
 };

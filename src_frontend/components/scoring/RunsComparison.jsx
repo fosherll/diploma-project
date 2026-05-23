@@ -2,11 +2,11 @@ import { useEffect, useState } from "react";
 import { apiFetch } from "../../api/client.js";
 
 const STATUS_CONFIG = {
-    up:      { icon: "↑", color: "#16a34a", bg: "#f0fdf4", label: "Moved up" },
-    down:    { icon: "↓", color: "#dc2626", bg: "#fef2f2", label: "Moved down" },
-    same:    { icon: "→", color: "#64748b", bg: "#f8fafc", label: "Same position" },
-    new:     { icon: "★", color: "#2563eb", bg: "#eff6ff", label: "New in top" },
-    removed: { icon: "✕", color: "#9ca3af", bg: "#f9fafb", label: "Left top" },
+    up:      { icon: "↑", color: "#16a34a", bg: "#f0fdf4", label: "Піднявся" },
+    down:    { icon: "↓", color: "#dc2626", bg: "#fef2f2", label: "Опустився" },
+    same:    { icon: "→", color: "#64748b", bg: "#f8fafc", label: "Без змін" },
+    new:     { icon: "★", color: "#2563eb", bg: "#eff6ff", label: "Новий у топ" },
+    removed: { icon: "✕", color: "#9ca3af", bg: "#f9fafb", label: "Вийшов з топ" },
 };
 
 export default function RunsComparison({ runs = [], vacancyId }) {
@@ -16,7 +16,6 @@ export default function RunsComparison({ runs = [], vacancyId }) {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState("");
 
-    // Pre-select the two most recent runs whenever runs list changes
     useEffect(() => {
         if (runs.length >= 2) {
             setRun1(String(runs[1].run_id));
@@ -30,7 +29,7 @@ export default function RunsComparison({ runs = [], vacancyId }) {
 
     async function handleCompare() {
         if (!run1 || !run2 || run1 === run2) {
-            setError("Please select two different runs.");
+            setError("Оберіть два різних запуски для порівняння.");
             return;
         }
         setError("");
@@ -50,33 +49,33 @@ export default function RunsComparison({ runs = [], vacancyId }) {
         const date = raw
             ? new Date(raw).toLocaleString("uk-UA", { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" })
             : String(r.run_id).slice(0, 8);
-        return `${String(r.run_id).slice(0, 8)}… · ${date} (${r.cnt ?? "?"} evals)`;
+        return `${String(r.run_id).slice(0, 8)}… · ${date} (${r.cnt ?? "?"})`;
     };
 
     if (runs.length < 2) return null;
 
     return (
         <div style={styles.wrapper}>
-            <h2 style={styles.heading}>Run comparison</h2>
+            <h2 style={styles.heading}>Порівняння запусків</h2>
 
             <div style={styles.controls}>
                 <div style={styles.selectGroup}>
-                    <label style={styles.label}>Baseline run</label>
+                    <label style={styles.label}>Базовий запуск</label>
                     <select style={styles.select} value={run1} onChange={e => { setRun1(e.target.value); setData(null); }}>
-                        <option value="">— select —</option>
+                        <option value="">— оберіть —</option>
                         {runs.map(r => <option key={r.run_id} value={String(r.run_id)}>{formatRunLabel(r)}</option>)}
                     </select>
                 </div>
                 <div style={styles.arrow}>→</div>
                 <div style={styles.selectGroup}>
-                    <label style={styles.label}>New run</label>
+                    <label style={styles.label}>Новий запуск</label>
                     <select style={styles.select} value={run2} onChange={e => { setRun2(e.target.value); setData(null); }}>
-                        <option value="">— select —</option>
+                        <option value="">— оберіть —</option>
                         {runs.map(r => <option key={r.run_id} value={String(r.run_id)}>{formatRunLabel(r)}</option>)}
                     </select>
                 </div>
                 <button style={styles.btn} onClick={handleCompare} disabled={loading}>
-                    {loading ? "Loading…" : "Compare"}
+                    {loading ? "Завантаження…" : "Порівняти"}
                 </button>
             </div>
 
@@ -96,11 +95,11 @@ export default function RunsComparison({ runs = [], vacancyId }) {
                         <table style={styles.table}>
                             <thead>
                                 <tr style={styles.thead}>
-                                    <th style={styles.th}>Change</th>
-                                    <th style={styles.th}>Candidate</th>
-                                    <th style={{ ...styles.th, textAlign: "center" }}>Rank (old → new)</th>
-                                    <th style={{ ...styles.th, textAlign: "center" }}>Score (old → new)</th>
-                                    <th style={{ ...styles.th, textAlign: "center" }}>Δ Score</th>
+                                    <th style={styles.th}>Зміна</th>
+                                    <th style={styles.th}>Кандидат</th>
+                                    <th style={{ ...styles.th, textAlign: "center" }}>Ранг (було → стало)</th>
+                                    <th style={{ ...styles.th, textAlign: "center" }}>Скор (було → стало)</th>
+                                    <th style={{ ...styles.th, textAlign: "center" }}>Δ Скор</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -166,12 +165,12 @@ export default function RunsComparison({ runs = [], vacancyId }) {
 }
 
 const styles = {
-    wrapper: { background: "#fff", border: "1px solid #e5e7eb", borderRadius: "16px", padding: "20px", display: "grid", gap: "16px" },
-    heading: { margin: 0, fontSize: "18px" },
+    wrapper: { background: "#fff", border: "1px solid #e2e8f0", borderRadius: "16px", padding: "20px", display: "grid", gap: "16px", boxShadow: "0 1px 3px rgba(0,0,0,0.05)" },
+    heading: { margin: 0, fontSize: "17px", fontWeight: 700, color: "#0f172a" },
     controls: { display: "flex", alignItems: "flex-end", gap: "12px", flexWrap: "wrap" },
     selectGroup: { display: "grid", gap: "4px", flex: "1 1 200px" },
     label: { fontSize: "12px", color: "#64748b", fontWeight: 600 },
-    select: { padding: "8px 10px", border: "1px solid #d1d5db", borderRadius: "8px", fontSize: "13px", background: "#f9fafb" },
+    select: { padding: "8px 10px", border: "1px solid #e2e8f0", borderRadius: "8px", fontSize: "13px", background: "#f8fafc" },
     arrow: { fontSize: "20px", color: "#94a3b8", paddingBottom: "4px" },
     btn: { padding: "8px 20px", background: "#2563eb", color: "#fff", border: "none", borderRadius: "8px", cursor: "pointer", fontWeight: 600, fontSize: "14px", flexShrink: 0 },
     error: { color: "#dc2626", margin: 0, fontSize: "13px" },
@@ -181,7 +180,7 @@ const styles = {
     tableWrap: { overflowX: "auto" },
     table: { width: "100%", borderCollapse: "collapse", fontSize: "13px" },
     thead: { background: "#f8fafc" },
-    th: { padding: "10px 12px", textAlign: "left", fontWeight: 600, color: "#374151", borderBottom: "2px solid #e5e7eb", whiteSpace: "nowrap" },
+    th: { padding: "10px 12px", textAlign: "left", fontWeight: 700, color: "#374151", borderBottom: "2px solid #e5e7eb", whiteSpace: "nowrap", fontSize: "12px", textTransform: "uppercase", letterSpacing: "0.03em" },
     td: { padding: "10px 12px", borderBottom: "1px solid #f1f5f9", verticalAlign: "middle" },
     statusIcon: { fontSize: "16px", fontWeight: 700 },
     city: { color: "#94a3b8", fontSize: "12px" },

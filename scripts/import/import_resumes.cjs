@@ -122,7 +122,7 @@ function buildInsert(rows) {
     return { sql, values };
 }
 
-// КЛЮЧЕВОЙ ФИКС: убираем дубли id внутри одного batch
+// убираем дубли id внутри одного batch
 function dedupeByIdKeepLast(batch) {
     const map = new Map();
     for (const r of batch) {
@@ -138,7 +138,7 @@ async function flushBatch(client, batch) {
     // 1) дедуп, чтобы Postgres не падал на ON CONFLICT
     const deduped = dedupeByIdKeepLast(batch);
 
-    // если были дубли — логнем, чтобы ты видел
+    // если были дубли — логнем
     if (deduped.length !== batch.length) {
         console.log(`[warn] batch deduped: ${batch.length} -> ${deduped.length}`);
     }

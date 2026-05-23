@@ -29,10 +29,31 @@ CONF_THRESHOLD  = 0.75   # поріг для "якісного" маппінгу
 def get_conn():
     return psycopg2.connect(DATABASE_URL)
 
+def clean_embedding_mappings(conn):
+    print("\n[clean] Очистка embedding_search маппінгів...")
+    with conn.cursor() as cur:
+        cur.execute("SELECT COUNT(*) FROM cv_skill_mappings WHERE method = 'embedding_search'")
+        cv_count = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM vac_skill_mappings WHERE method = 'embedding_search'")
+        vac_count = cur.fetchone()[0]
+        print(f"  cv_skill_mappings  (embedding_search): {cv_count}")
+        print(f"  vac_skill_mappings (embedding_search): {vac_count}")
 
-# ─────────────────────────────────────────────────────────────
-# ВИПРАВЛЕННЯ ORPHANED LINKS
-# ─────────────────────────────────────────────────────────────
+        cur.execute("DELETE FROM cv_skill_mappings WHERE method = 'embedding_search'")
+        cur.execute("""
+            DELETE FROM resume_mapping_links
+            WHERE mapping_document_id NOT IN (SELECT DISTINCT document_id FROM cv_skill_mappings)
+        """)
+        cur.execute("DELETE FROM vac_skill_mappings WHERE method = 'embedding_search'")
+        cur.execute("""
+            DELETE FROM vacancy_mapping_links
+            WHERE mapping_document_id NOT IN (SELECT DISTINCT document_id FROM vac_skill_mappings)
+        """)
+        conn.commit()
+        print(f"  Видалено: {cv_count} cv + {vac_count} vac маппінгів та їх посилання")
+        print("  Тепер запусти: python map_resumes_embedding_search.py")
+        print("               python map_vacancies_embedding_search.py")
+
 
 def fix_orphaned_links(conn):
     print("\n[fix] Перевірка orphaned resume_mapping_links...")
@@ -54,11 +75,6 @@ def fix_orphaned_links(conn):
         else:
             print("  Все чисто, нічого видаляти")
 
-
-# ─────────────────────────────────────────────────────────────
-# СПОСІБ 1 — статистика по методах
-# ─────────────────────────────────────────────────────────────
-
 def method_1_stats(conn):
     print("\n" + "=" * 60)
     print("  СПОСІБ 1 — Статистика по методах маппінгу")
@@ -66,7 +82,6 @@ def method_1_stats(conn):
 
     with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
 
-        # --- Резюме ---
         print("\n[РЕЗЮМЕ] cv_skill_mappings:")
         cur.execute("""
             SELECT
@@ -92,7 +107,6 @@ def method_1_stats(conn):
             print(f"  {r['method']:<22} {r['total']:>8} {r['avg_conf']:>7} "
                   f"{r['above_07']:>7} {r['above_075']:>7} {r['above_09']:>7} {r['pct_075']:>7}%")
 
-        # --- Вакансії ---
         print("\n[ВАКАНСІЇ] vac_skill_mappings:")
         cur.execute("""
             SELECT
@@ -118,7 +132,6 @@ def method_1_stats(conn):
             print(f"  {r['method']:<22} {r['total']:>8} {r['avg_conf']:>7} "
                   f"{r['above_07']:>7} {r['above_075']:>7} {r['above_09']:>7} {r['pct_075']:>7}%")
 
-        # --- Покриття (виправлено: тільки реальні резюме) ---
         print("\n[ПОКРИТТЯ]")
         cur.execute("SELECT COUNT(*) FROM resumes")
         total_res = cur.fetchone()[0]
@@ -139,11 +152,6 @@ def method_1_stats(conn):
 
         print(f"  Резюме з маппінгами:   {mapped_res}/{total_res} ({res_pct}%)")
         print(f"  Вакансії з маппінгами: {mapped_vac}/{total_vac} ({vac_pct}%)")
-
-
-# ─────────────────────────────────────────────────────────────
-# СПОСІБ 2 — аналіз якості по рівнях confidence
-# ─────────────────────────────────────────────────────────────
 
 def method_2_confidence_analysis(conn):
     print("\n" + "=" * 60)
@@ -222,11 +230,6 @@ def method_2_confidence_analysis(conn):
             label = (r['esco_label'] or '')[:43]
             print(f"  {i:<4} {label:<45} {r['resume_count']:>8} {r['avg_conf']:>10}")
 
-
-# ─────────────────────────────────────────────────────────────
-# СПОСІБ 3 — мінівибірка ТІЛЬКИ з confidence >= 0.75
-# ─────────────────────────────────────────────────────────────
-
 def method_3_sample(conn):
     print("\n" + "=" * 60)
     print(f"  СПОСІБ 3 — Мінівибірка (confidence >= {CONF_THRESHOLD})")
@@ -276,21 +279,22 @@ def method_3_sample(conn):
   ─────────────────────────────────────────────
 """)
 
-
-# ─────────────────────────────────────────────────────────────
-# MAIN
-# ─────────────────────────────────────────────────────────────
-
 def main():
     parser = argparse.ArgumentParser(description="Оцінка якості ESCO маппінгів")
     parser.add_argument("--method", type=int, choices=[1, 2, 3],
                         help="Запустити тільки один спосіб: 1, 2 або 3")
     parser.add_argument("--fix-links", action="store_true",
                         help="Видалити orphaned resume_mapping_links і вийти")
+    parser.add_argument("--clean", action="store_true",
+                        help="Видалити всі embedding_search маппінги і посилання, потім вийти")
     args = parser.parse_args()
 
     conn = get_conn()
     try:
+        if args.clean:
+            clean_embedding_mappings(conn)
+            return
+
         if args.fix_links:
             fix_orphaned_links(conn)
             return

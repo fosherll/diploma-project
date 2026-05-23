@@ -1,12 +1,11 @@
-// run_scoring.cjs
 require("dotenv").config();
 
 const { Pool } = require("pg");
 const crypto = require("crypto");
 
-const VACANCY_ID = process.argv[2];          // например: 6348037
-const LIMIT = Number(process.argv[3] || 1000); // сколько резюме прогнать
-const RESUME_OFFSET = Number(process.argv[4] || 0); // сдвиг (для прогонов партиями)
+const VACANCY_ID = process.argv[2];
+const LIMIT = Number(process.argv[3] || 1000);
+const RESUME_OFFSET = Number(process.argv[4] || 0);
 
 if (!process.env.DATABASE_URL) {
     console.error("[fatal] DATABASE_URL is missing in .env");
@@ -24,7 +23,6 @@ function norm(s) {
 }
 
 function safeText(obj) {
-    // где искать ключевые слова
     return [
         obj.title,
         obj.candidate_name,

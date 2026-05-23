@@ -2,7 +2,7 @@ import VacancyCard from "./VacancyCard.jsx";
 
 export default function VacancyList({ vacancies }) {
     if (!vacancies.length) {
-        return <p>No vacancies found.</p>;
+        return <p style={{ color: "#94a3b8", textAlign: "center" }}>Вакансій не знайдено.</p>;
     }
 
     return (
@@ -18,6 +18,6 @@ const styles = {
     grid: {
         display: "grid",
         gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))",
-        gap: "16px"
+        gap: "14px"
     }
 };

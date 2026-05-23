@@ -13,7 +13,9 @@ export async function apiFetch(path, options = {}) {
         let errorMessage = `HTTP ${response.status}`;
         try {
             const errorData = await response.json();
-            errorMessage = errorData.error || errorData.message || errorMessage;
+            // error може бути рядком або об'єктом {message}
+            errorMessage = errorData.error?.message || errorData.error
+                        || errorData.message || errorMessage;
         } catch {
         }
         throw new Error(errorMessage);

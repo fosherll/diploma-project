@@ -310,7 +310,6 @@ export async function ensureDefaultCriteria(client, vacancyId) {
     const languageRequirements = extractLanguageRequirements(vacancy);
     const titleKeywords = extractTitleKeywords(vacancy);
     const educationRequirements = extractEducationRequirements(vacancy);
-    const hasSkillMapping = await hasVacancyMappingLink(client, vacancyId);
 
     const defaultItems = [
         {

@@ -2,7 +2,7 @@ import Header from "./Header.jsx";
 
 export default function AppLayout({ children }) {
     return (
-        <div style={styles.page}>
+        <div style={styles.root}>
             <Header />
             <main style={styles.main}>{children}</main>
         </div>
@@ -10,13 +10,13 @@ export default function AppLayout({ children }) {
 }
 
 const styles = {
-    page: {
+    root: {
         minHeight: "100vh",
-        background: "#f7f7f8"
+        background: "#f1f5f9"
     },
     main: {
-        maxWidth: "1200px",
+        maxWidth: "1280px",
         margin: "0 auto",
-        padding: "24px"
+        padding: "32px 24px"
     }
 };

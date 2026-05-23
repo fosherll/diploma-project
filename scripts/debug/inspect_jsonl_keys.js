@@ -1,7 +1,7 @@
 // import_resumes.js
 // Usage:
 //   node import_resumes.js "E:\Диплом\resumes\resumes_batch_001.jsonl" 1000
-// где 1000 — размер пачки (опционально)
+// де 1000 — розмір пачки (опціонально)
 
 require("dotenv").config();
 
@@ -23,7 +23,7 @@ if (!process.env.DATABASE_URL) {
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
-// Приведение типов под твои ключи
+// приведення типів під ключі
 function toInt(v) {
     if (v === null || v === undefined || v === "") return null;
     const n = Number(v);
@@ -41,15 +41,12 @@ function toBool(v) {
 
 function toDate(v) {
     if (!v) return null;
-    // если прилетает "2025-01-31" или ISO — Postgres обычно съест сам как timestamptz/timestamp
-    // но на всякий случай нормализуем:
     const d = new Date(v);
     if (Number.isNaN(d.getTime())) return null;
     return d.toISOString(); // ISO строка
 }
 
 async function ensureSchema(client) {
-    // Минимальная таблица под твои поля (если уже есть — просто пропустит)
     await client.query(`
     CREATE TABLE IF NOT EXISTS resumes (
       id TEXT PRIMARY KEY,
@@ -70,16 +67,13 @@ async function ensureSchema(client) {
     );
   `);
 
-    // Индекс по дате (опционально, но полезно)
     await client.query(`
     CREATE INDEX IF NOT EXISTS resumes_creation_date_idx
     ON resumes (creation_date);
   `);
 }
 
-// Собираем мультивставку на batchSize строк
 function buildInsert(rows) {
-    // Колонки в таблице
     const cols = [
         "id",
         "url",
@@ -111,7 +105,6 @@ function buildInsert(rows) {
         placeholders.push(`(${rowPlaceholders.join(", ")})`);
     }
 
-    // UPSERT: если id уже есть — обновляем поля
     const updates = cols
         .filter((c) => c !== "id")
         .map((c) => `${c}=EXCLUDED.${c}`)
@@ -171,13 +164,11 @@ async function main() {
                 continue;
             }
 
-            // ВАЖНО: id должен быть
             if (!obj.id) {
                 bad++;
                 continue;
             }
 
-            // Маппинг полей
             const row = {
                 id: String(obj.id),
                 url: obj.url ?? null,

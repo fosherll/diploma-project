@@ -1,0 +1,5 @@
+{
+  "watch": ["src_backend"],
+  "ext": "js,mjs,cjs",
+  "ignore": ["scripts/**", "*.json", "*.png", "*.txt"]
+}

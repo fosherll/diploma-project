@@ -1,8 +1,9 @@
 import { withClient } from "../db.js";
-import { badRequest, notFound } from "../utils/httpErrors.js";
+import { notFound } from "../utils/httpErrors.js";
 import { SCORING_RULES } from "../domain/scoringRules.js";
+import { round4 } from "../utils/math.js";
 import { resolveVacancyMappingDocumentId } from "../utils/resolveVacancyMapping.js";
-import { generateCandidateSummary } from "../services/llmSummaryService.js";
+import { resolveResumeMappingDocumentId } from "../utils/resolveResumeMapping.js";
 import { clusterCandidates } from "../services/clusteringService.js";
 import { getSkillGap } from "../services/skillGapService.js";
 import { recommendVacanciesForResume } from "../services/vacancyRecommendService.js";
@@ -43,9 +44,6 @@ function toBoolean(value) {
     return Boolean(value);
 }
 
-function round4(value) {
-    return Math.round(Number(value) * 10000) / 10000;
-}
 /**
  * @param {Object|null|undefined} meta
  * @returns {EnrichedRequiredMeta & Object}
@@ -114,8 +112,6 @@ function enrichRequiredMeta(meta, detailRows) {
     };
 }
 
-// resolveVacancyMappingDocumentId imported from ../utils/resolveVacancyMapping.js
-
 export default async function resultsRoutes(app) {
     app.get("/:vacancyId/runs", {
         schema: {
@@ -175,7 +171,8 @@ export default async function resultsRoutes(app) {
                         r.candidate_name,
                         r.city,
                         e.total_score,
-                        r.creation_date
+                        r.creation_date,
+                        (e.meta->>'esco_skill_sim')::numeric AS esco_skill_sim
                  FROM evaluations e
                           JOIN resumes r ON r.id = e.resume_id
                  WHERE e.vacancy_id=$1
@@ -278,46 +275,38 @@ export default async function resultsRoutes(app) {
         const { limit = 10 } = req.query;
 
         return await withClient(async (client) => {
-            const { rows: latestRunRows } = await client.query(
-                `SELECT run_id
-                 FROM evaluations
-                 WHERE vacancy_id=$1
-                 GROUP BY run_id
-                 ORDER BY MIN(created_at) DESC
-                     LIMIT 1`,
-                [String(vacancyId)]
-            );
-
-            if (latestRunRows.length === 0) {
-                throw notFound("No runs found for vacancy", {
-                    vacancyId: String(vacancyId)
-                });
-            }
-
-            const latestRunId = String(latestRunRows[0].run_id);
-
+            // Single CTE: resolve latest run_id and fetch top candidates in one round-trip
             const { rows } = await client.query(
-                `SELECT e.resume_id,
+                `WITH latest_run AS (
+                     SELECT run_id
+                     FROM evaluations
+                     WHERE vacancy_id = $1
+                     GROUP BY run_id
+                     ORDER BY MIN(created_at) DESC
+                     LIMIT 1
+                 )
+                 SELECT e.resume_id,
                         r.candidate_name,
                         r.city,
                         e.total_score,
                         r.creation_date,
                         e.run_id
-                 FROM evaluations e
-                          JOIN resumes r ON r.id = e.resume_id
-                 WHERE e.vacancy_id=$1
-                   AND e.run_id=$2
-                   AND COALESCE((e.meta->>'excluded_by_required')::boolean, false) = false
-                 ORDER BY
-                     e.total_score DESC,
-                     r.creation_date DESC NULLS LAST
-                     LIMIT $3`,
-                [String(vacancyId), latestRunId, limit]
+                 FROM latest_run lr
+                 JOIN evaluations e ON e.run_id = lr.run_id AND e.vacancy_id = $1
+                 JOIN resumes r ON r.id = e.resume_id
+                 WHERE COALESCE((e.meta->>'excluded_by_required')::boolean, false) = false
+                 ORDER BY e.total_score DESC, r.creation_date DESC NULLS LAST
+                 LIMIT $2`,
+                [String(vacancyId), limit]
             );
+
+            if (rows.length === 0) {
+                throw notFound("No runs found for vacancy", { vacancyId: String(vacancyId) });
+            }
 
             return {
                 vacancy_id: String(vacancyId),
-                run_id: latestRunId,
+                run_id: String(rows[0].run_id),
                 items: rows
             };
         });
@@ -344,21 +333,10 @@ export default async function resultsRoutes(app) {
         const runId = req.query.run_id;
 
         return await withClient(async (client) => {
-            const { rows: resumeLinkRows } = await client.query(
-                `SELECT mapping_document_id
-                 FROM resume_mapping_links
-                 WHERE resume_id=$1
-                     LIMIT 1`,
-                [String(resumeId)]
-            );
-
-            const resumeMappingDocumentId =
-                resumeLinkRows.length > 0 ? String(resumeLinkRows[0].mapping_document_id) : null;
-
-            const vacancyMappingDocumentId = await resolveVacancyMappingDocumentId(
-                client,
-                vacancyId
-            );
+            const [resumeMappingDocumentId, vacancyMappingDocumentId] = await Promise.all([
+                resolveResumeMappingDocumentId(client, resumeId),
+                resolveVacancyMappingDocumentId(client, vacancyId)
+            ]);
 
             // 1. Preferred source: direct mapping tables
             if (resumeMappingDocumentId && vacancyMappingDocumentId) {
@@ -367,6 +345,7 @@ export default async function resultsRoutes(app) {
                  FROM cv_skill_mappings
                  WHERE document_id=$1
                    AND esco_label IS NOT NULL
+                   AND confidence >= 0.5
                  GROUP BY esco_label
                  ORDER BY esco_label`,
                     [resumeMappingDocumentId]
@@ -377,6 +356,7 @@ export default async function resultsRoutes(app) {
                  FROM vac_skill_mappings
                  WHERE document_id=$1
                    AND esco_label IS NOT NULL
+                   AND confidence >= 0.5
                  GROUP BY esco_label
                  ORDER BY esco_label`,
                     [vacancyMappingDocumentId]
@@ -404,6 +384,14 @@ export default async function resultsRoutes(app) {
                         vacancy_confidence: Number(row.confidence ?? 0)
                     }));
 
+                // Всі навички кандидата (для відображення "що він має")
+                const cv_skills = cvRows.map(row => ({
+                    esco_label: String(row.esco_label).trim(),
+                    confidence: Number(row.confidence ?? 0),
+                    matched_vacancy: cvMap.has(String(row.esco_label).trim()) &&
+                        vacRows.some(v => String(v.esco_label).trim() === String(row.esco_label).trim())
+                })).sort((a, b) => b.confidence - a.confidence);
+
                 return {
                     vacancy_id: String(vacancyId),
                     resume_id: String(resumeId),
@@ -413,7 +401,8 @@ export default async function resultsRoutes(app) {
                     resume_mapping_document_id: resumeMappingDocumentId,
                     vacancy_mapping_document_id: vacancyMappingDocumentId,
                     matched,
-                    missing
+                    missing,
+                    cv_skills
                 };
             }
 
@@ -571,27 +560,31 @@ export default async function resultsRoutes(app) {
                 });
             }
 
-            const comparison = [];
+            // Fetch details for all candidates in one query, then group in JS
+            const resumeIds = rows.map(r => String(r.resume_id));
+            const { rows: allDetailRows } = await client.query(
+                `SELECT e.resume_id, c.name, c.calc_type,
+                        d.raw_score, d.weighted_score, d.explanation, d.details
+                 FROM evaluations e
+                 JOIN evaluation_details d ON d.evaluation_id = e.id
+                 JOIN criteria c ON c.id = d.criteria_id
+                 WHERE e.vacancy_id = $1
+                   AND e.run_id = $2
+                   AND e.resume_id = ANY($3::text[])
+                 ORDER BY e.resume_id, d.weighted_score DESC, c.id`,
+                [String(vacancyId), String(runId), resumeIds]
+            );
 
-            for (const row of rows) {
-                const { rows: detailRows } = await client.query(
-                    `SELECT c.name,
-                            c.calc_type,
-                            d.raw_score,
-                            d.weighted_score,
-                            d.explanation,
-                            d.details
-                     FROM evaluations e
-                     JOIN evaluation_details d ON d.evaluation_id = e.id
-                     JOIN criteria c ON c.id = d.criteria_id
-                     WHERE e.vacancy_id=$1
-                       AND e.run_id=$2
-                       AND e.resume_id=$3
-                     ORDER BY d.weighted_score DESC, c.id`,
-                    [String(vacancyId), String(runId), String(row.resume_id)]
-                );
+            const detailsByResumeId = new Map();
+            for (const row of allDetailRows) {
+                const key = String(row.resume_id);
+                if (!detailsByResumeId.has(key)) detailsByResumeId.set(key, []);
+                detailsByResumeId.get(key).push(row);
+            }
 
-                comparison.push({
+            const comparison = rows.map((row) => {
+                const detailRows = detailsByResumeId.get(String(row.resume_id)) ?? [];
+                return {
                     resume_id: row.resume_id,
                     candidate_name: row.candidate_name,
                     city: row.city,
@@ -605,8 +598,8 @@ export default async function resultsRoutes(app) {
                         explanation: item.explanation,
                         details: item.details
                     }))
-                });
-            }
+                };
+            });
 
             return {
                 vacancy_id: String(vacancyId),
@@ -805,39 +798,4 @@ export default async function resultsRoutes(app) {
         });
     });
 
-    app.post("/:vacancyId/resumes/:resumeId/ai-summary", {
-        schema: {
-            params: {
-                type: "object",
-                required: ["vacancyId", "resumeId"],
-                properties: {
-                    vacancyId: { type: "string", minLength: 1 },
-                    resumeId: { type: "string", minLength: 1 }
-                }
-            },
-            body: {
-                type: "object",
-                properties: {
-                    vacancyTitle:  { type: "string" },
-                    candidateName: { type: "string" },
-                    candidateCity: { type: "string" },
-                    totalScore:    { type: "number" },
-                    strengths:     { type: "array" },
-                    weaknesses:    { type: "array" },
-                    matchedSkills: { type: "array", items: { type: "string" } },
-                    missingSkills: { type: "array", items: { type: "string" } }
-                }
-            }
-        }
-    }, async (req) => {
-        const { vacancyTitle, candidateName, candidateCity, totalScore, strengths, weaknesses, matchedSkills, missingSkills } = req.body;
-        try {
-            const text = await generateCandidateSummary({
-                vacancyTitle, candidateName, candidateCity, totalScore, strengths, weaknesses, matchedSkills, missingSkills
-            });
-            return { summary: text };
-        } catch (err) {
-            throw badRequest(err.message || "Failed to generate AI summary");
-        }
-    });
 }

@@ -34,7 +34,7 @@ async function main() {
             if (!s) continue;
 
             try {
-                JSON.parse(s); // проверка что это валидный JSON
+                JSON.parse(s);
                 await client.query(sql, [SOURCE, s]);
                 ok++;
             } catch {

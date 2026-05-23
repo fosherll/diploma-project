@@ -3,13 +3,18 @@ import cors from "@fastify/cors";
 import "dotenv/config";
 import { fileURLToPath } from "node:url";
 
-import vacanciesRoutes from "./routes/vacancies.js";
-import criteriaRoutes from "./routes/criteria.js";
-import scoringRoutes from "./routes/scoring.js";
-import resultsRoutes from "./routes/results.js";
+import vacanciesRoutes  from "./routes/vacancies.js";
+import criteriaRoutes   from "./routes/criteria.js";
+import scoringRoutes    from "./routes/scoring.js";
+import resultsRoutes    from "./routes/results.js";
+import clusteringRoutes from "./routes/clustering.js";
 import { badRequest } from "./utils/httpErrors.js";
 export function buildApp() {
     const app = Fastify({ logger: true });
+
+    // Збільшуємо таймаути для довгих запитів (кластеризація ~60-120 сек)
+    app.server.headersTimeout = 600_000;   // 10 хв
+    app.server.requestTimeout = 600_000;   // 10 хв
 
     app.register(cors, {
         origin: true,
@@ -44,12 +49,21 @@ export function buildApp() {
         });
     });
 
-    app.get("/health", async () => ({ ok: true }));
+    const startTime = new Date().toISOString();
+    app.get("/health", async () => ({ ok: true, headersTimeout: app.server.headersTimeout, startTime }));
+
+    // Тест-ендпоінт: просто чекає N секунд
+    app.get("/test-wait/:sec", async (req) => {
+        const sec = Number(req.params.sec) || 5;
+        await new Promise(r => setTimeout(r, sec * 1000));
+        return { ok: true, waited: sec };
+    });
 
     app.register(vacanciesRoutes, { prefix: "/vacancies" });
     app.register(criteriaRoutes, { prefix: "/vacancies" });
     app.register(scoringRoutes, { prefix: "/vacancies" });
-    app.register(resultsRoutes, { prefix: "/vacancies" });
+    app.register(resultsRoutes,    { prefix: "/vacancies" });
+    app.register(clusteringRoutes, { prefix: "/clustering" });
 
     app.setNotFoundHandler((req, reply) => {
         return reply.code(404).send({
