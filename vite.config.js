@@ -6,8 +6,14 @@ export default defineConfig({
     server: {
         port: 5173,
         proxy: {
-            '/vacancies': 'http://localhost:3001',
-            '/health': 'http://localhost:3001'
+            '/vacancies': 'https://diploma-project-production-8147.up.railway.app',
+            '/health': 'https://diploma-project-production-8147.up.railway.app',
+            '/criteria': 'https://diploma-project-production-8147.up.railway.app',
+            '/scoring': 'https://diploma-project-production-8147.up.railway.app',
+            '/resumes': 'https://diploma-project-production-8147.up.railway.app',
+            '/analytics': 'https://diploma-project-production-8147.up.railway.app',
+            '/runs': 'https://diploma-project-production-8147.up.railway.app',
+            '/skills': 'https://diploma-project-production-8147.up.railway.app',
         }
     }
 });
